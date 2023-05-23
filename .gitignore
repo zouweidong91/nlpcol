@@ -1,0 +1,6 @@
+*.pyc
+*.checkpoints/
+test/
+notebooks/
+logs/
+.vscode/
