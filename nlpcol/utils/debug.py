@@ -1,7 +1,6 @@
 # vscode debug工具
 # export REMOTE_DEBUG=True
 # set REMOTE_DEBUG=True
-import os, sys
 
 def waitRemoteDebug():
 
