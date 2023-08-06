@@ -4,6 +4,7 @@ import torch.nn as nn
 from torch import Tensor, Size
 import torch.nn.functional as F
 import math
+from dataclasses import dataclass
 
 from typing import List, Optional, Tuple, Union
 
@@ -261,19 +262,32 @@ class BertLayer(nn.Module):
         layer_output = self.ffnOutput(feed_forward, attention_output)
         return layer_output
         
+@dataclass
+class BertEncoderOutput:
+    last_hidden_state: torch.FloatTensor = None
+    hidden_states: Optional[List[torch.FloatTensor]] = None
+
 
 class BertEncoder(nn.Module):
     def __init__(self, config: Config):
         super().__init__()
         self.layers = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
 
-    def forward(self, hidden_states:torch.Tensor, attention_mask:torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states:torch.Tensor, attention_mask:torch.Tensor) -> BertEncoderOutput:
         """这里控制整个enceder层的输出格式, 暂时只输出最后一个隐藏藏 TODO
         """
+        all_hidden_states = [hidden_states]
+
         for i, layer_module in enumerate(self.layers):
             layer_output = layer_module(hidden_states, attention_mask)
             hidden_states = layer_output
-        return hidden_states
+
+            all_hidden_states.append(hidden_states)
+
+        return BertEncoderOutput(
+            last_hidden_state = hidden_states,
+            hidden_states = all_hidden_states
+        )
                 
 
 
@@ -294,13 +308,17 @@ class ModelBase(nn.Module):
             module.weight.data.fill_(1.0)
 
 class BertPool(nn.Module):
+    """pool层"""
     def __init__(self, config: Config):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.activation = nn.Tanh()
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        first_token_tensor = hidden_states[:, 0]
+        """
+        hidden_states (torch.Tensor): BertEncoder.last_hidden_state
+        """
+        first_token_tensor = hidden_states[:, 0] # 获取第一个每行的token btz*hidden_size
         pool_output = self.dense(first_token_tensor)
         pool_output = self.activation(pool_output)
         return pool_output
@@ -317,29 +335,63 @@ class BertMLM(nn.Module):
         self.decoder = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.bias = nn.Parameter(torch.zeros(config.vocab_size))
         self.decoder.bias = self.bias
-        
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        """
+        hidden_states (torch.Tensor): BertEncoder.last_hidden_state
+        """
         hidden_states = self.dense(hidden_states)
         hidden_states = self.transform_act_fn(hidden_states)
         hidden_states = self.LayerNorm(hidden_states)
         hidden_states = self.decoder(hidden_states)
         return hidden_states
 
+class BertNsp(nn.Module):
+    """bert nsp任务"""
+    def __init__(self, config:Config):
+        super().__init__()
+        self.seq_relationship = nn.Linear(config.hidden_size, 2)
+    
+    def forward(self, pooled_output: torch.Tensor) -> torch.Tensor:
+        seq_relationship_score = self.seq_relationship(pooled_output)
+        return seq_relationship_score
+
+@dataclass
+class BertOutput:
+    pooled_output: torch.FloatTensor = None
+    nsp_scores: torch.FloatTensor = None
+    mlm_scores: torch.FloatTensor = None
+    encoded_layers: Optional[List[torch.FloatTensor]] = None # 所有encoder层的输出
+
 
 class BertModel(ModelBase):
-    def __init__(self, config: Config):
+    """bert 模型"""
+    def __init__(self,
+        config: Config,
+        with_pool = False, # 是否包含pool部分
+        with_nsp = False,  # 是否包含nsp部分
+        with_mlm = False,  # 是否包含mlm部分
+    ):
         super().__init__()
         self.config = config
+        self.with_pool = with_pool
+        self.with_nsp = with_nsp
+        self.with_mlm = with_mlm
 
         self.embeddings = BertEmbeddings(config)
         self.encoder = BertEncoder(config)
-        # self.pooler = BertPool(config)
-        self.mlm = BertMLM(config)
+        
+        if self.with_pool:
+            self.pool = BertPool(config)
+            # nsp的输入为pooled_output
+            if self.with_nsp:
+                self.nsp = BertNsp(config)
+
+        if self.with_mlm:
+            self.mlm = BertMLM(config)
 
         # 初始化权重
         self._init_weights(self)
-        
 
     def forward(
         self,
@@ -352,32 +404,26 @@ class BertModel(ModelBase):
         if attention_mask is None:
             attention_mask = (input_ids != self.config.pad_token_id).long() # bert默认0为mask_value
 
-
-        # TODO 修改输入输出
         embedding_output = self.embeddings(input_ids, token_type_ids, position_ids)
-        encoder_outputs = self.encoder(embedding_output, attention_mask)
-        print(encoder_outputs)
+        encoder_output:BertEncoderOutput = self.encoder(embedding_output, attention_mask)
+        hidden_states = encoder_output.last_hidden_state
+        pooled_output, nsp_scores, mlm_scores = None, None, None
 
-        mlm_scores = self.mlm(encoder_outputs)
-        mlm_activation = get_activation('softmax')
-        mlm_scores = mlm_activation(mlm_scores)
+        if self.with_pool:
+            pooled_output = self.pool(hidden_states)
+        if self.with_pool and self.nsp:
+            nsp_scores = self.nsp(pooled_output)
+        if self.with_mlm:
+            mlm_scores = self.mlm(hidden_states)
+            mlm_activation = get_activation('softmax')
+            mlm_scores = mlm_activation(mlm_scores)
 
-        return mlm_scores
-
-
-def load_config(config_path):
-    import json
-    with open(config_path, 'r') as f:
-        config = json.loads(f.read())
-        print(config)
-        return config
-
-# config_path = '/home/dataset/pretrain_ckpt/bert/chinese_L-12_H-768_A-12/config.json'
-# config = load_config(config_path)
-# config = Config(**config)
-# bert = BertLayer(config)
-
-# print(1)
+        return BertOutput(
+            pooled_output = pooled_output,
+            nsp_scores = nsp_scores,
+            mlm_scores = mlm_scores,
+            encoded_layers = encoder_output.hidden_states,
+        )
 
 
 def variable_mapping(prefix = 'bert'):
@@ -433,4 +479,11 @@ def variable_mapping(prefix = 'bert'):
         
 
 
+
+def load_config(config_path):
+    import json
+    with open(config_path, 'r') as f:
+        config = json.loads(f.read())
+        print(config)
+        return config
 

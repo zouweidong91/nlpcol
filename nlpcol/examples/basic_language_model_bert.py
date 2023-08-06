@@ -1,16 +1,13 @@
 
 # 基础测试：mlm预测
 
-from nlpcol.models.bert import BertModel, Config, load_config, variable_mapping
+from nlpcol.models.bert import BertModel, BertOutput, Config, load_config, variable_mapping
 from nlpcol.tokenizers import Tokenizer
-from nlpcol.utils.snippets import seed_everything
+from nlpcol.utils.snippets import seed_everything, model_parameter_diff
 import torch
 import torch.nn as nn
 
 seed_everything(42)
-
-from nlpcol.utils._file import FileTool
-import json
 
 
 root_model_path = "/home/dataset/pretrain_ckpt/bert/chinese_L-12_H-768_A-12"
@@ -22,25 +19,7 @@ checkpoint_path = root_model_path + '/pytorch_model.bin.bfr_convert'
 tokenizer = Tokenizer(vocab_path, do_lower_case=True)
 config = load_config(config_path)
 config = Config(**config)
-model = BertModel(config)  # 建立模型，加载权重
-
-
-def model_parameter_diff(state_dict_1:dict, state_dict_2:dict=None):
-    """模型参数输出到文件，方便对比差异
-    """
-    columns = '\t'.join(["Key", "Shape", "Count"])
-
-    paramrter_list_1 = [columns]
-    paramrter_list_2 = [columns]
-
-    for key, value in state_dict_1.items():
-        paramrter_list_1.append( '\t'.join([key, str(list(value.shape)), str(value.numel())]))
-    FileTool.write(paramrter_list_1, "logs/t1.txt")
-
-    for key, value in state_dict_2.items():
-        paramrter_list_2.append( '\t'.join([key, str(list(value.shape)), str(value.numel())]))
-    FileTool.write(paramrter_list_2, "logs/t2.txt")
-
+model = BertModel(config, with_mlm=True)  # 建立模型，加载权重
 
 
 # model_parameter_diff(
@@ -75,6 +54,8 @@ segment_ids_tensor = torch.tensor([segments_ids])
 # 需要传入参数with_mlm
 model.eval()
 with torch.no_grad():
-    probas = model(tokens_ids_tensor, segment_ids_tensor)
-    result = torch.argmax(probas[0, :], dim=-1).numpy()
+    bert_output:BertOutput = model(tokens_ids_tensor, segment_ids_tensor)
+    mlm_scores = bert_output.mlm_scores
+    # print(mlm_scores)
+    result = torch.argmax(mlm_scores[0, :], dim=-1).numpy()
     print(tokenizer.decode(result))

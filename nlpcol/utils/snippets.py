@@ -1,11 +1,13 @@
 
-import os
-import numpy as np
-import random
-import torch
 import json
+import os
+import random
 
+import numpy as np
+import torch
+from nlpcol.utils._file import FileTool
 from torch.utils.data import Dataset, IterableDataset
+
 
 def seed_everything(seed:int=42):
     """固定seed
@@ -95,6 +97,22 @@ class IterDataset(IterableDataset):
                 yield sample
 
 
+def model_parameter_diff(state_dict_1:dict, state_dict_2:dict=None):
+    """模型参数输出到文件，方便对比差异
+    """
+    os.makedirs('logs/', exist_ok=True)
+    columns = '\t'.join(["Key", "Shape", "Count"])
+
+    paramrter_list_1 = [columns]
+    paramrter_list_2 = [columns]
+
+    for key, value in state_dict_1.items():
+        paramrter_list_1.append( '\t'.join([key, str(list(value.shape)), str(value.numel())]))
+    FileTool.write(paramrter_list_1, "logs/para1.txt")
+
+    for key, value in state_dict_2.items():
+        paramrter_list_2.append( '\t'.join([key, str(list(value.shape)), str(value.numel())]))
+    FileTool.write(paramrter_list_2, "logs/para2.txt")
 
 
 
