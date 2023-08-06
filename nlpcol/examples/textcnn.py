@@ -15,7 +15,7 @@ from nlpcol.tokenizers import SampleTokenizer
 
 
 # 基本训练参数
-train_config = TrainConfig(batch_size = 128, epochs = 5, max_seq_length=30)
+train_config = TrainConfig(batch_size = 128, epochs = 5, max_seq_length=32)
 
 
 class THUDataset(ListDataset):

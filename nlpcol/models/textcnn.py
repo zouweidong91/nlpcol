@@ -20,7 +20,7 @@ class Config:
 
 class TextCNN(nn.Module):
     def __init__(self, config:Config, vocab_size:int, num_classes:int):
-        """_summary_
+        """TextCNN主要用于文本分类
 
         Args:
             config (Config): 模型配置信息
