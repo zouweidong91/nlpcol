@@ -58,19 +58,11 @@ class Trainer:
         """
         self.global_step = self.epoch * self.steps_per_epoch + self.local_step
 
-    def get_train_dataloader(self, train_dataset):
-        train_dataloader = DataLoader(train_dataset, batch_size=self.config.batch_size, \
-            shuffle=True, collate_fn=self.collate_fn)
-        return train_dataloader
+    def get_dataloader(self, dataset, shuffle:bool=False):
+        dataloader = DataLoader(dataset, batch_size=self.config.batch_size, \
+            shuffle=shuffle, collate_fn=self.collate_fn)
+        return dataloader
     
-    def get_test_dataloader(self, eval_dataset=None):
-        if not eval_dataset:
-            return None
-
-        test_dataloader = DataLoader(eval_dataset, batch_size=self.config.batch_size, \
-            shuffle=False, collate_fn=self.collate_fn)
-        return test_dataloader
-
 
     def train_step(self, batch):
         """每个batch的执行逻辑 返回损失
@@ -102,8 +94,8 @@ class Trainer:
         self.callbacks.on_epoch_begin(self.global_step, self.epoch)
         progress_bar = tqdm(range(len(train_dataloader)))
         progress_bar.set_description(f'loss: {0:>7f}')
-        # model.train()的作用是启用 Batch Normalization 和 Dropout。
-        # 保证BN层能够用到每一批数据的均值和方差。对于Dropout，model.train()是随机取一部分网络连接来训练更新参数。
+        # model.train()的作用是启用 Layer Normalization 和 Dropout。
+        # 保证LN层能够用到每一批数据的均值和方差。对于Dropout，model.train()是随机取一部分网络连接来训练更新参数。
         self.model.train()
         epoch_loss = 0.0
         
@@ -126,7 +118,7 @@ class Trainer:
         """
         self.callbacks = CallbackList(callbacks or [])
         epochs = self.config.epochs
-        train_dataloader = self.get_train_dataloader(train_dataset)
+        train_dataloader = self.get_dataloader(train_dataset, shuffle=True)
 
         self.steps_per_epoch = len(train_dataloader)
         self.total_steps = self.steps_per_epoch * epochs

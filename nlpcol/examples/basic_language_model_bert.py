@@ -1,25 +1,26 @@
 
 # 基础测试：mlm预测
 
-from nlpcol.models.bert import BertModel, BertOutput, Config, load_config, variable_mapping
-from nlpcol.tokenizers import Tokenizer
-from nlpcol.utils.snippets import seed_everything, model_parameter_diff
 import torch
 import torch.nn as nn
+from nlpcol.model import build_transformer_model
+from nlpcol.models.bert import BertModel, BertOutput
+from nlpcol.tokenizers import Tokenizer
+from nlpcol.utils.snippets import model_parameter_diff, seed_everything
 
 seed_everything(42)
 
 
-root_model_path = "/home/dataset/pretrain_ckpt/bert/chinese_L-12_H-768_A-12"
-vocab_path = root_model_path + "/vocab.txt"
-config_path = root_model_path + "/config.json"
-checkpoint_path = root_model_path + '/pytorch_model.bin.bfr_convert'
+model_path = "/home/dataset/pretrain_ckpt/bert/chinese_L-12_H-768_A-12"
+vocab_path = model_path + "/vocab.txt"
+config_path = model_path + "/config.json"
+checkpoint_path = model_path + '/pytorch_model.bin.bfr_convert'
 
 # 建立分词器
 tokenizer = Tokenizer(vocab_path, do_lower_case=True)
-config = load_config(config_path)
-config = Config(**config)
-model = BertModel(config, with_mlm=True)  # 建立模型，加载权重
+
+# 需要传入参数with_mlm
+model = build_transformer_model(checkpoint_path, config_path, with_mlm=True, with_pool=True, with_nsp=True)  # 建立模型，加载权重
 
 
 # model_parameter_diff(
@@ -28,34 +29,15 @@ model = BertModel(config, with_mlm=True)  # 建立模型，加载权重
 # ) 
 
 
-def load_weight(model:nn.Module, checkpoint_path):
-    state_dict = torch.load(checkpoint_path, map_location='cpu')
-    state_dict_new = {}
-    mapping = variable_mapping()
-    for new_key, old_key in mapping.items():
-        if new_key not in model.state_dict():
-            print(new_key, '忽略')
-            continue
-        
-        state_dict_new[new_key] = state_dict[old_key]
-    # print(state_dict_new['mlm.decoder.weight'])
-
-    model.load_state_dict(state_dict_new, strict=True)
-
-
-load_weight(model, checkpoint_path)
-
-token_ids, segments_ids = tokenizer.encode("湖北省省会在[MASK][MASK]市。")
+token_ids, segments_ids = tokenizer.encode("广东省的省会在[MASK][MASK]市。")
 print(''.join(tokenizer.ids_to_tokens(token_ids)))
 
-tokens_ids_tensor = torch.tensor([token_ids])
-segment_ids_tensor = torch.tensor([segments_ids])
+tokens_ids_tensor = torch.tensor([token_ids, token_ids])
+segment_ids_tensor = torch.tensor([segments_ids, segments_ids])
 
-# 需要传入参数with_mlm
-model.eval()
-with torch.no_grad():
-    bert_output:BertOutput = model(tokens_ids_tensor, segment_ids_tensor)
-    mlm_scores = bert_output.mlm_scores
-    # print(mlm_scores)
-    result = torch.argmax(mlm_scores[0, :], dim=-1).numpy()
-    print(tokenizer.decode(result))
+bert_output:BertOutput = model.predict([tokens_ids_tensor, segment_ids_tensor])
+mlm_scores = bert_output.mlm_scores
+# print(mlm_scores)
+result = torch.argmax(mlm_scores[0, :], dim=-1).numpy()
+print(tokenizer.decode(result))
+
