@@ -69,7 +69,7 @@ class Model(nn.Module):
         return output
 
 
-class Evaluate(Callback):
+class Evaluator(Callback):
     def __init__(self, trainer:Trainer, save_path:str, valid_dataloader:DataLoader):
         self.trainer = trainer
         self.save_path = save_path
@@ -112,8 +112,8 @@ print("saved model path: ", save_path)
 trainer = Trainer(model, train_config, loss_fn, optimizer, collate_fn)
 
 
-valid_dataloader = trainer.get_dataloader(valid_data, shuffle=True)
-evaluate = Evaluate(trainer, save_path, valid_dataloader)
+valid_dataloader = trainer.get_dataloader(valid_data)
+evaluate = Evaluator(trainer, save_path, valid_dataloader)
 
 trainer.train(train_data, [evaluate])
 

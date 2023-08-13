@@ -9,7 +9,7 @@ from nlpcol.layers import LayerNorm
 class BaseModel(nn.Module):
 
     def _init_weights(self, module):
-        """初始化权重  整个神经网络几乎都是由以下三种层组合成的"""
+        """初始化权重  大部分神经网络层都是由以下三种层组合成的"""
         if isinstance(module, nn.Linear):
             module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
             if module.bias is not None:

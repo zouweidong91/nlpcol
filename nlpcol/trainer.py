@@ -63,6 +63,14 @@ class Trainer:
             shuffle=shuffle, collate_fn=self.collate_fn)
         return dataloader
     
+    def args_expend(self, X):
+        """model入参是否展开"""
+        if isinstance(X, torch.Tensor):
+            return False
+        elif type(X) in [list, tuple]:
+            return True
+        return False
+
 
     def train_step(self, batch):
         """每个batch的执行逻辑 返回损失
@@ -74,8 +82,8 @@ class Trainer:
         self.callbacks.on_batch_begin(self.global_step, self.local_step)
 
         X, y = batch
-        pred = self.model(*X)
-        loss:torch.Tensor = self.loss_fn(pred, y)
+        output = self.model(*X) if self.args_expend(X) else self.model(X)
+        loss:torch.Tensor = self.loss_fn(output, y)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
