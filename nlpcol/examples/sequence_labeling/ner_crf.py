@@ -1,6 +1,8 @@
 
-# 情感分类任务, 加载bert权重
-# valid_acc: 94.72, test_acc: 94.11
+# bert+crf用来做实体识别
+# 数据集：http://s3.bmio.net/kashgari/china-people-daily-ner-corpus.tar.gz
+# [valid_f1]  token_level: 96.83； entity_level: 95.77
+
 
 import os
 
@@ -8,14 +10,17 @@ import numpy as np
 import torch
 import torch.nn as nn
 from nlpcol.callback import Callback
-from nlpcol.config import WordDir, device
+from nlpcol.config import TrainConfig, WordDir, device
 from nlpcol.crf import CRF
 from nlpcol.model import build_transformer_model
 from nlpcol.models.bert import BertModel, BertOutput
 from nlpcol.tokenizers import Tokenizer
-from nlpcol.trainer import TrainConfig, Trainer
+from nlpcol.trainer import Trainer
 from nlpcol.utils.data import PeopleDailyDataset
-from nlpcol.utils.snippets import seed_everything, sequence_padding
+from nlpcol.utils.snippets import (save_model_parameter, seed_everything,
+                                   sequence_padding)
+from nlpcol.utils.snippets4examples import model_name_gene, trans_entity2tuple
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 # 固定seed
@@ -96,8 +101,7 @@ class Model(nn.Module):
 class Loss(nn.Module):
     def forward(self, outputs, labels):
         output, attention_mask = outputs
-        # return model.crf(output, labels, attention_mask.byte())
-        return model.crf(*outputs, labels)
+        return model.crf(output, attention_mask, labels)
 
 
 def evaluate(data):
@@ -123,39 +127,21 @@ def evaluate(data):
     return f1, precision, recall, f2, precision2, recall2
 
 
-def trans_entity2tuple(scores):
-    '''把tensor转为(样本id, start, end, 实体类型)的tuple用于计算指标
-    '''
-    batch_entity_ids = set()
-    for i, one_samp in enumerate(scores):
-        entity_ids = []
-        for j, item in enumerate(one_samp):
-            flag_tag = categories_id2label[item.item()]
-            if flag_tag.startswith('B-'):  # B
-                entity_ids.append([i, j, j, flag_tag[2:]])
-            elif len(entity_ids) == 0:
-                continue
-            elif (len(entity_ids[-1]) > 0) and flag_tag.startswith('I-') and (flag_tag[2:]==entity_ids[-1][-1]):  # I
-                entity_ids[-1][-2] = j
-            elif len(entity_ids[-1]) > 0:
-                entity_ids.append([])
-
-        for i in entity_ids:
-            if i:
-                batch_entity_ids.add(tuple(i))
-    return batch_entity_ids
 
 class Evaluator(Callback):
     """评估与保存
     """
-    def __init__(self):
+    def __init__(self, trainer:Trainer, save_path:str, valid_dataloader:DataLoader):
+        self.trainer = trainer
+        self.save_path = save_path
+        self.valid_dataloader = valid_dataloader
         self.best_val_f1 = 0.
 
     def on_epoch_end(self, steps, epoch, logs=None):
         f1, precision, recall, f2, precision2, recall2 = evaluate(valid_dataloader)
         if f2 > self.best_val_f1:
             self.best_val_f1 = f2
-            # model.save_weights('best_model.pt')
+            self.trainer.save_weights(self.save_path)
         print(f'[val-token  level] f1: {f1:.5f}, p: {precision:.5f} r: {recall:.5f}')
         print(f'[val-entity level] f1: {f2:.5f}, p: {precision2:.5f} r: {recall2:.5f} best_f1: {self.best_val_f1:.5f}\n')
 
@@ -164,22 +150,60 @@ class Evaluator(Callback):
 model = Model().to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=2e-5)
 loss_fn = Loss()
+# save_model_parameter(model.state_dict(), 'logs/bertcrf_para1.txt')
 
 
-model_dir = "/home/tmp/bert/people_daily/"
-os.makedirs(model_dir, exist_ok=True)
-model_name = '{}_{}_{}.bin'.format('test', train_config.batch_size, train_config.epochs)  # 定义模型名字
-save_path = os.path.join(model_dir, model_name)
-print("saved model path: ", save_path)
+save_path = model_name_gene(train_config, 'bert', 'people_daily')
 trainer = Trainer(model, train_config, loss_fn, optimizer, collate_fn)
 
+class Infer:
+    def predict(self, texts):
+        """
+        单条样本推理
+        """
+        rst = []
 
-valid_dataloader = trainer.get_dataloader(valid_data)
-evaluator = Evaluator()
+        for text in texts:
+            tokens = tokenizer.tokenize(text, maxlen=256)
+            mapping = tokenizer.rematch(text, tokens)  
+            token_ids = tokenizer.tokens_to_ids(tokens)
+            token_ids = torch.tensor(token_ids, dtype=torch.long, device=device)[None, :]
 
-trainer.train(train_data, [evaluator])
+            scores = model.predict(token_ids) # token对应的标签id
+            entity_pred = trans_entity2tuple(scores, categories_id2label, text_pos=True, mapping=mapping)
+            pred = format(entity_pred, text)
+            rst.append(
+                {"text": text, "pred": pred}
+            )
+        return rst
+
+    def format(self, entity_pred, text):
+        """
+        pos 字段 左闭右开
+        """
+        rst = []
+        for entity in entity_pred:
+            sample_id, start, end, label = entity
+            name = text[start:end+1]
+            rst.append({"name":name, 'label': label, 'pos': [start, end+1]})
+        return rst
+
+
+if __name__ == "__main__":
+    valid_dataloader = trainer.get_dataloader(valid_data)
+    evaluator = Evaluator(trainer, save_path, valid_dataloader)
+    # trainer.train(train_data, [evaluator])
+    
+    trainer.load_weights('/home/tmp/bert/people_daily/test_16_10.bin')
+    texts = [
+        '海钓比赛地点在厦门与金门之间的海域。', 
+        '全国人民代表大会澳门特别行政区筹备委员会第一次全体会议今天上午在北京人民大会堂开幕，国务院副总理、筹委会主任委员钱其琛在致开幕词中指出',
+    ]
+    rst = Infer().predict(texts)
+    print(rst)
+    
 
 
 """
-export PYTHONPATH=/home/app/nlpcol CUDA_VISIBLE_DEVICES=1 && python  "/home/app/nlpcol/nlpcol/examples/sequence_labeling/task_sequence_labeling_ner_crf.py"
+export PYTHONPATH=/home/app/nlpcol CUDA_VISIBLE_DEVICES=1 && python  "/home/app/nlpcol/nlpcol/examples/sequence_labeling/ner_crf.py"
 """

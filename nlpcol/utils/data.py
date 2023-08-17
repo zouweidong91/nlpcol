@@ -62,5 +62,5 @@ class PeopleDailyDataset(ListDataset):
                     elif flag[0] == 'I':
                         d[-1][1] = i
                 D.append(d)
-        return D[:1000]
+        return D
 

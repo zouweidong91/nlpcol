@@ -102,9 +102,12 @@ def save_model_parameter(state_dict: dict, save_path: str):
     """保存模型参数信息至txt文件"""
     columns = '\t'.join(["Key", "Shape", "Count"])
     paramrter_list = [columns]
+    total_paras = 0 # 计算总参量
 
     for key, value in state_dict.items():
+        total_paras += value.numel()
         paramrter_list.append( '\t'.join([key, str(list(value.shape)), str(value.numel())]))
+    paramrter_list.append('总参数量' + str(total_paras))
     FileTool.write(paramrter_list, save_path)
 
 def model_parameter_diff(state_dict_1:dict, state_dict_2:dict=None):

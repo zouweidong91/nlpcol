@@ -7,11 +7,11 @@ import os
 import torch
 import torch.nn as nn
 from nlpcol.callback import Callback
-from nlpcol.config import WordDir, device
+from nlpcol.config import TrainConfig, WordDir, device
 from nlpcol.model import build_transformer_model
 from nlpcol.models.bert import BertModel, BertOutput
 from nlpcol.tokenizers import Tokenizer
-from nlpcol.trainer import TrainConfig, Trainer
+from nlpcol.trainer import Trainer
 from nlpcol.utils.data import SentimentDataset
 from nlpcol.utils.snippets import seed_everything, sequence_padding
 from torch.utils.data import DataLoader
@@ -81,11 +81,11 @@ class Evaluator(Callback):
 
         if val_acc > self.best_val_acc:
             self.best_val_acc = val_acc
-            # model.save_weights('best_model.pt')
+            self.trainer.save_weights(self.save_path)
         print(f'val_acc: {val_acc:.5f}, best_val_acc: {self.best_val_acc:.5f}\n')
 
-    def on_train_end(self, *args):
-        self.trainer.save_weights(self.save_path)
+    # def on_train_end(self, *args):
+    #     self.trainer.save_weights(self.save_path)
 
     def evaluate(self):
         total, correct = 0, 0
@@ -113,9 +113,9 @@ trainer = Trainer(model, train_config, loss_fn, optimizer, collate_fn)
 
 
 valid_dataloader = trainer.get_dataloader(valid_data)
-evaluate = Evaluator(trainer, save_path, valid_dataloader)
+evaluator = Evaluator(trainer, save_path, valid_dataloader)
 
-trainer.train(train_data, [evaluate])
+trainer.train(train_data, [evaluator])
 
 
 """

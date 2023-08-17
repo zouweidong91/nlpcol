@@ -23,10 +23,10 @@ tokenizer = Tokenizer(vocab_path, do_lower_case=True)
 model = build_transformer_model(checkpoint_path, config_path, with_mlm=True, with_pool=True, with_nsp=True)  # 建立模型，加载权重
 
 
-# model_parameter_diff(
-#     state_dict_1=model.state_dict(), 
-#     state_dict_2=torch.load(checkpoint_path, map_location='cpu')
-# ) 
+model_parameter_diff(
+    state_dict_1=model.state_dict(), 
+    state_dict_2=torch.load(checkpoint_path, map_location='cpu')
+) 
 
 
 token_ids, segments_ids = tokenizer.encode("广东省的省会在[MASK][MASK]市。")

@@ -6,8 +6,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+# crf原理通俗易懂介绍参考：
+# https://zhuanlan.zhihu.com/p/119254570?utm_medium=social&utm_oi=668925446389895168&utm_psn=1584475475874627584&utm_source=wechat_session
+# loss函数本质求解目标路径在所有路径中的概率值，优化方向使这个概率值最大
+# 代码 Ref: https://github.com/lonePatient/BERT-NER-Pytorch/blob/master/models/layers/crf.py
 
-# Ref Conditional random field: https://github.com/lonePatient/BERT-NER-Pytorch/blob/master/models/layers/crf.py
 class CRF(nn.Module):
     """Conditional random field.
     This module implements a conditional random field [LMP01]_. The forward computation
@@ -16,7 +19,6 @@ class CRF(nn.Module):
     the best tag sequence given an emission score tensor using `Viterbi algorithm`_.
     Args:
         num_tags: Number of tags.
-        batch_first: Whether the first dimension corresponds to the size of a minibatch.
     Attributes:
         start_transitions (`~torch.nn.Parameter`): Start transition score tensor of size
             ``(num_tags,)``.
@@ -231,7 +233,7 @@ class CRF(nn.Module):
             # Set score to the next score if this timestep is valid (mask == 1)
             # and save the index that produces the next score
             # shape: (batch_size, num_tags)
-            score = torch.where(mask[i].unsqueeze(1), next_score, score)
+            score = torch.where(mask[i].bool().unsqueeze(1), next_score, score)
             history.append(indices)
 
         # End transition score

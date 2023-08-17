@@ -9,15 +9,7 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from nlpcol.callback import Callback, CallbackList
-
-
-class TrainConfig:
-    """训练超参数配置
-    """
-    def __init__(self, *args, **kwargs):
-        self.batch_size:int = kwargs.get("batch_size", 8)
-        self.epochs:int = kwargs.get("epochs", 3)
-        self.max_seq_length:int = kwargs.get("max_seq_length", 128)
+from nlpcol.config import TrainConfig
 
 
 class Trainer:
@@ -155,7 +147,7 @@ class Trainer:
         Args:
             load_path (_type_): 权重路径
         """
-        state_dict = torch.load(load_path)
+        state_dict = torch.load(load_path, map_location='cpu')
         self.model.load_state_dict(state_dict, strict)
 
 

@@ -14,7 +14,7 @@ def load_config(config_path) -> dict:
         return config
 
 
-def build_transformer_model(checkpoint_path:str, config_path:str, model='bert', **kwargs) -> BaseModel:
+def build_transformer_model(checkpoint_path:str=None, config_path:str=None, model='bert', **kwargs) -> BaseModel:
     """_summary_
 
     Args:
@@ -35,7 +35,8 @@ def build_transformer_model(checkpoint_path:str, config_path:str, model='bert', 
     transformer.apply(transformer._init_weights)
 
     # 权重加载
-    transformer.load_weight(checkpoint_path)
+    if not checkpoint_path:
+        transformer.load_weight(checkpoint_path)
 
     return transformer
 
