@@ -35,7 +35,7 @@ def build_transformer_model(checkpoint_path:str=None, config_path:str=None, mode
     transformer.apply(transformer._init_weights)
 
     # 权重加载
-    if not checkpoint_path:
+    if checkpoint_path:
         transformer.load_weight(checkpoint_path)
 
     return transformer

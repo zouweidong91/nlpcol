@@ -75,12 +75,13 @@ class CRF(nn.Module):
         self._validate(emissions, tags=tags, mask=mask)
 
         # shape: (batch_size,)
-        numerator = self._compute_score(emissions, tags, mask)
+        numerator = self._compute_score(emissions, tags, mask) # log(目标路径分值)
         # shape: (batch_size,)
-        denominator = self._compute_normalizer(emissions, mask)
+        denominator = self._compute_normalizer(emissions, mask)    # log (Z向量)
         # shape: (batch_size,)
         llh = denominator - numerator
-        # 目标函数意思是 目标路径在所有路径中的概率最大。 因此优化方向朝llh最小即可
+        # 目标函数意思是 目标路径在所有路径中的概率最大。 因此优化方向朝llh最小；
+        # p = 目标路径分值/Z向量 -->   loss = -log p = (denominator - numerator)
 
         if reduction == 'none':
             return llh
