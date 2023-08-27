@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 from nlpcol.callback import Callback
 from nlpcol.config import TrainConfig, WordDir, device
-from nlpcol.crf import CRF
+from nlpcol.layers.crf import CRF
 from nlpcol.model import build_transformer_model
 from nlpcol.models.bert import BertModel, BertOutput
 from nlpcol.tokenizers import Tokenizer

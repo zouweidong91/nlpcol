@@ -5,6 +5,7 @@ from typing import List, Optional
 import numpy as np
 import torch
 import torch.nn as nn
+from torch import Size, Tensor
 
 # crf原理通俗易懂介绍参考：
 # https://zhuanlan.zhihu.com/p/119254570?utm_medium=social&utm_oi=668925446389895168&utm_psn=1584475475874627584&utm_source=wechat_session
@@ -45,9 +46,9 @@ class CRF(nn.Module):
             nn.init.uniform_(self.end_transitions, -0.1, 0.1)
             nn.init.uniform_(self.transitions, -0.1, 0.1)
         elif init_transitions is not None:
-            transitions = torch.tensor(init_transitions[0], dtype=torch.float)
-            start_transitions = torch.tensor(init_transitions[1], dtype=torch.float)
-            end_transitions = torch.tensor(init_transitions[2], dtype=torch.float)
+            transitions = Tensor(init_transitions[0], dtype=torch.float)
+            start_transitions = Tensor(init_transitions[1], dtype=torch.float)
+            end_transitions = Tensor(init_transitions[2], dtype=torch.float)
 
             if not freeze:
                 self.transitions = nn.Parameter(transitions)
@@ -61,8 +62,8 @@ class CRF(nn.Module):
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}(num_tags={self.num_tags})'
 
-    def forward(self, emissions: torch.Tensor, mask: torch.ByteTensor,
-                tags: torch.LongTensor, reduction: str = 'mean') -> torch.Tensor:
+    def forward(self, emissions: Tensor, mask: torch.ByteTensor,
+                tags: torch.LongTensor, reduction: str = 'mean') -> Tensor:
         """Compute the conditional log likelihood of a sequence of tags given emission scores.
             emissions: [btz, seq_len, num_tags]
             mask: [btz, seq_len]
@@ -92,7 +93,7 @@ class CRF(nn.Module):
         return llh.sum() / mask.float().sum()
 
 
-    def _validate(self, emissions: torch.Tensor, tags: Optional[torch.LongTensor] = None,
+    def _validate(self, emissions: Tensor, tags: Optional[torch.LongTensor] = None,
                   mask: Optional[torch.ByteTensor] = None) -> None:
         if emissions.dim() != 3:
             raise ValueError(f'emissions must have dimension of 3, got {emissions.dim()}')
@@ -111,7 +112,7 @@ class CRF(nn.Module):
             if not no_empty_seq_bf:
                 raise ValueError('mask of the first timestep must all be on')
 
-    def _compute_score(self, emissions: torch.Tensor, tags: torch.LongTensor, mask: torch.ByteTensor) -> torch.Tensor:
+    def _compute_score(self, emissions: Tensor, tags: torch.LongTensor, mask: torch.ByteTensor) -> Tensor:
         # 计算真实路径得分
         # emissions: (batch_size, seq_length, num_tags)
         # tags: (batch_size, seq_length) 真实路径标签
@@ -142,7 +143,7 @@ class CRF(nn.Module):
 
         return score
 
-    def _compute_normalizer(self, emissions: torch.Tensor, mask: torch.ByteTensor) -> torch.Tensor:
+    def _compute_normalizer(self, emissions: Tensor, mask: torch.ByteTensor) -> Tensor:
         # 计算所有可能路径得分和
         # emissions: (batch_size, seq_length, num_tags)
         # mask: (batch_size, seq_length)
@@ -266,12 +267,12 @@ class CRF(nn.Module):
         return best_tags_list
 
 
-    def decode(self, emissions: torch.Tensor,
+    def decode(self, emissions: Tensor,
                mask: Optional[torch.ByteTensor] = None) -> List[List[int]]:
         """Find the most likely tag sequence using Viterbi algorithm.
 
         Args:
-            emissions (`~torch.Tensor`): Emission score tensor of size
+            emissions (`~Tensor`): Emission score tensor of size
                 ``(seq_length, batch_size, num_tags)`` if ``batch_first`` is ``False``,
                 ``(batch_size, seq_length, num_tags)`` otherwise.
             mask (`~torch.ByteTensor`): Mask tensor of size ``(seq_length, batch_size)``

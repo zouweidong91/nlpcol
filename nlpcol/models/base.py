@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Size, Tensor
-from nlpcol.layers import LayerNorm
+from nlpcol.layers.layer import LayerNorm
 
 class BaseModel(nn.Module):
 

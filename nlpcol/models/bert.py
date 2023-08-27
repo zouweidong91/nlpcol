@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from nlpcol.activations import get_activation
-from nlpcol.layers import LayerNorm
+from nlpcol.layers.layer import LayerNorm
 from torch import Size, Tensor
 
 from .base import BaseModel
@@ -87,7 +87,7 @@ class BertEmbeddings(nn.Module):
         token_type_ids: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
 
-    ) -> torch.Tensor:
+    ) -> Tensor:
 
         device = input_ids.device
         btz, seq_len = input_ids.shape
@@ -126,12 +126,12 @@ class MultiHeadAttentionLayer(nn.Module):
         """其他Module继承支持重写mask函数
         """
 
-    def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
+    def transpose_for_scores(self, x: Tensor) -> Tensor:
         """对输入张量做形状变换
         B:batch_size  L:seq_length  H: hidden_size
 
         Args:
-            x (torch.Tensor): B*L*H
+            x (Tensor): B*L*H
         """
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)   
         x = x.view(new_x_shape)  # torch.view 只能用于连续的张量  torch.reshape 可以用于不连续的张量  x_t.is_contiguous()  x:  B*L*num_head*head_size
@@ -185,11 +185,11 @@ class AttentionOutput(nn.Module):
         self.LayerNorm = LayerNorm(config.hidden_size, config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-    def forward(self, context_layer: torch.Tensor, input_tensor: torch.Tensor) -> torch.Tensor:
+    def forward(self, context_layer: Tensor, input_tensor: Tensor) -> Tensor:
         """
         Args:
-            context_layer (torch.Tensor): attention层的输出结果
-            input_tensor (torch.Tensor): BertEmbeddings层的输出
+            context_layer (Tensor): attention层的输出结果
+            input_tensor (Tensor): BertEmbeddings层的输出
         """
         context_layer = self.dense(context_layer)
         context_layer = self.dropout(context_layer)
@@ -204,7 +204,7 @@ class FeedForward(nn.Module):
         self.dense = nn.Linear(config.hidden_size, config.intermediate_size)
         self.intermediate_act_fn = get_activation(config.hidden_act)
 
-    def forward(self, hidden_state: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_state: Tensor) -> Tensor:
         hidden_state = self.dense(hidden_state)
         hidden_state = self.intermediate_act_fn(hidden_state)
         return hidden_state
@@ -218,15 +218,15 @@ class FFNOutput(nn.Module):
         self.LayerNorm = LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-    def forward(self, hidden_state: torch.Tensor, input_tensor: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_state: Tensor, input_tensor: Tensor) -> Tensor:
         """_summary_
 
         Args:
-            hidden_state (torch.Tensor): FeedForward的输出结果
-            input_tensor (torch.Tensor): AttentionOutput的输出结果
+            hidden_state (Tensor): FeedForward的输出结果
+            input_tensor (Tensor): AttentionOutput的输出结果
 
         Returns:
-            torch.Tensor: _description_
+            Tensor: _description_
         """
         hidden_state = self.dense(hidden_state)
         hidden_state = self.dropout(hidden_state)
@@ -248,7 +248,7 @@ class BertLayer(nn.Module):
         self.feedForward = FeedForward(config)
         self.ffnOutput = FFNOutput(config)
     
-    def forward(self, hidden_states:torch.Tensor, attention_mask:torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states:Tensor, attention_mask:Tensor) -> Tensor:
         context_layer = self.multiHeadAttention(
             hidden_states, hidden_states, hidden_states, attention_mask 
         )
@@ -268,7 +268,7 @@ class BertEncoder(nn.Module):
         super().__init__()
         self.layers = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
 
-    def forward(self, hidden_states:torch.Tensor, attention_mask:torch.Tensor) -> BertEncoderOutput:
+    def forward(self, hidden_states:Tensor, attention_mask:Tensor) -> BertEncoderOutput:
         """这里控制整个enceder层的输出格式, 暂时只输出最后一个隐藏藏 TODO
         """
         all_hidden_states = [hidden_states]
@@ -292,9 +292,9 @@ class BertPool(nn.Module):
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.activation = nn.Tanh()
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states: Tensor) -> Tensor:
         """
-        hidden_states (torch.Tensor): BertEncoder.last_hidden_state
+        hidden_states (Tensor): BertEncoder.last_hidden_state
         """
         first_token_tensor = hidden_states[:, 0] # 获取第一个每行的token btz*hidden_size
         pool_output = self.dense(first_token_tensor)
@@ -314,9 +314,9 @@ class BertMLM(nn.Module):
         self.bias = nn.Parameter(torch.zeros(config.vocab_size))
         self.decoder.bias = self.bias
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states: Tensor) -> Tensor:
         """
-        hidden_states (torch.Tensor): BertEncoder.last_hidden_state
+        hidden_states (Tensor): BertEncoder.last_hidden_state
         """
         hidden_states = self.dense(hidden_states)
         hidden_states = self.transform_act_fn(hidden_states)
@@ -330,7 +330,7 @@ class BertNsp(nn.Module):
         super().__init__()
         self.seq_relationship = nn.Linear(config.hidden_size, 2)
     
-    def forward(self, pooled_output: torch.Tensor) -> torch.Tensor:
+    def forward(self, pooled_output: Tensor) -> Tensor:
         seq_relationship_score = self.seq_relationship(pooled_output)
         return seq_relationship_score
 
@@ -372,10 +372,10 @@ class BertModel(BaseModel):
 
     def forward(
         self,
-        input_ids: Optional[torch.Tensor],
-        token_type_ids: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
+        input_ids: Optional[Tensor],
+        token_type_ids: Optional[Tensor] = None,
+        position_ids: Optional[Tensor] = None,
+        attention_mask: Optional[Tensor] = None,
     ):
         # ========================= attention_mask =========================
         if attention_mask is None:

@@ -40,3 +40,26 @@ class LayerNorm(nn.Module):
         return self.weight * o + self.bias
 
 
+
+
+class GlobalPointer(nn.Module):
+        """全局指针模块
+        将序列的每个(start, end)作为整体来进行判断
+        以实体为基本单位进行判别，每一个实体都是“n(n+1)/2选k”的多标签分类问题
+        参考：https://kexue.fm/archives/8373
+        """
+        def __init__(self, hidden_size, heads, head_size, RoPE=True, use_bias=True, tril_mask=True):
+             super().__init__()
+             self.heads = heads
+             self.head_size = head_size
+             self.RoPE = RoPE
+             self.tril_mask = tril_mask
+
+             self.dense = nn.Linear(hidden_size, heads * head_size * 2, bias=use_bias)
+             if self.RoPE:
+                self.position
+                
+
+             
+        
+
