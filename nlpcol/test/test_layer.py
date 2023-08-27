@@ -9,11 +9,10 @@ random_seed = 42
 torch.manual_seed(random_seed)
 
 from nlpcol.losses import CrossEntropyLoss, FocalLoss, MultilabelCategoricalCrossentropy
+from nlpcol.layers.layer import SinusoidalPositionalEmbedding
 
 
-
-
-class LaterTest(unittest.TestCase):
+class LayerTest(unittest.TestCase):
 
     def test_random(self):
         # self.assertEqual()
@@ -42,8 +41,8 @@ class LaterTest(unittest.TestCase):
 
 
     def test_MultilabelCategoricalCrossentropy(self):
+        """多标签分类的交叉熵"""
         loss = MultilabelCategoricalCrossentropy()
-
         batch_size = 3
         num_classes = 5
 
@@ -55,12 +54,23 @@ class LaterTest(unittest.TestCase):
         for i, num_targets in enumerate(num_targets_per_sample):
             y_true[i, target_classes[i, :num_targets]] = 1
 
+        # 生成y_pred
         logits = torch.rand((batch_size, num_classes))
         y_pred = F.softmax(logits, dim=1)
 
         output = loss(y_true, y_pred)
         print(output)
         
+    def test_SinusoidalPositionalEmbedding(self):
+        """正余弦位置编码"""
+        max_position = 2
+        embedding_size = 4
+        position_embedding = SinusoidalPositionalEmbedding(max_position, embedding_size)
+        print(position_embedding.embeddings_table.weight)
+
+        position_ids = torch.arange(0, max_position, dtype=torch.long)
+        output = position_embedding(position_ids)
+        print(output)
 
 
 

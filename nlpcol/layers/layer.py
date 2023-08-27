@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Size, Tensor
+from typing import Optional
+import numpy as np
 
 
 class LayerNorm(nn.Module):
@@ -38,6 +40,45 @@ class LayerNorm(nn.Module):
         o = (input - mean) / torch.sqrt(var + self.eps)
 
         return self.weight * o + self.bias
+
+
+class SinusoidalPositionalEmbedding(nn.Module):
+    """定义Sin-Cos位置Embedding
+    """
+    def __init__(self, max_position:int, embedding_size:int):
+        """_summary_
+
+        Args:
+            max_position (int): 位置长度
+            embedding_size (int): 位置编码 hidden_size
+        """
+        super().__init__()
+        position_enc = self.get_sinusoid_encoding_table(max_position, embedding_size)
+        self.embeddings_table = nn.Embedding.from_pretrained(position_enc, freeze=True)
+    
+    def get_sinusoid_encoding_table(self, max_position, embedding_size):
+        # First part of the PE function: sin and cos argument
+        # np.sin(pos/(np.power(10000, 2i/d_model)))  dim 2i
+        # np.cos(pos/(np.power(10000, 2i/d_model)))  dim 2i+1
+        position_enc = torch.tensor(
+            [[pos / np.power(10000, 2 * (j // 2) / embedding_size) for j in range(embedding_size)]
+            for pos in range(max_position)]
+        ).float()
+        # Second part, apply the cosine to even columns and sin to odds.
+        position_enc[:, ::2] = torch.sin(position_enc[:, ::2])
+        position_enc[:, 1::2] = torch.cos(position_enc[:, 1::2])
+        return position_enc
+    
+    def forward(self,position_ids:Tensor) -> Tensor:
+        return self.embeddings_table(position_ids)
+
+
+class RotaryPositionalEmbedding(nn.Module):
+    """旋转式位置编码:https://kexue.fm/archives/8265
+    """
+    def __init__(self, embedding_size:int):
+        super().__init__()
+
 
 
 
