@@ -117,8 +117,8 @@ def evaluate(data):
         Z += label.gt(0).sum().item()
 
         # entity粒度
-        entity_pred = trans_entity2tuple(scores)
-        entity_true = trans_entity2tuple(label)
+        entity_pred = trans_entity2tuple(scores, categories_id2label)
+        entity_true = trans_entity2tuple(label, categories_id2label)
         X2 += len(entity_pred.intersection(entity_true))
         Y2 += len(entity_pred)
         Z2 += len(entity_true)
@@ -192,18 +192,13 @@ class Infer:
 if __name__ == "__main__":
     valid_dataloader = trainer.get_dataloader(valid_data)
     evaluator = Evaluator(trainer, save_path, valid_dataloader)
-    # trainer.train(train_data, [evaluator])
+    trainer.train(train_data, [evaluator])
     
-    trainer.load_weights('/home/tmp/bert/people_daily/test_16_10.bin')
-    texts = [
-        '海钓比赛地点在厦门与金门之间的海域。', 
-        '全国人民代表大会澳门特别行政区筹备委员会第一次全体会议今天上午在北京人民大会堂开幕，国务院副总理、筹委会主任委员钱其琛在致开幕词中指出',
-    ]
-    rst = Infer().predict(texts)
-    print(rst)
+    # trainer.load_weights('/home/tmp/bert/people_daily/test_16_10.bin')
+    # texts = [
+    #     '海钓比赛地点在厦门与金门之间的海域。', 
+    #     '全国人民代表大会澳门特别行政区筹备委员会第一次全体会议今天上午在北京人民大会堂开幕，国务院副总理、筹委会主任委员钱其琛在致开幕词中指出',
+    # ]
+    # rst = Infer().predict(texts)
+    # print(rst)
     
-
-
-"""
-export PYTHONPATH=/home/app/nlpcol CUDA_VISIBLE_DEVICES=1 && python  "/home/app/nlpcol/nlpcol/examples/sequence_labeling/ner_crf.py"
-"""

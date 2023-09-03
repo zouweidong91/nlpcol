@@ -29,7 +29,6 @@ def seed_everything(seed:int=42):
     torch.backends.cudnn.deterministic = True
     return seed
 
-
 def get_device():
     if torch.cuda.is_available(): 
         gpu = os.getenv('device') if os.getenv('device') else "0"
@@ -40,6 +39,13 @@ def get_device():
     print(f'Using {device} device')
     return device
 
+def torch_gc() -> None:
+    r"""
+    Collects GPU memory.
+    """
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
 
 class ListDataset(Dataset):
     """数据是List格式Dataset
@@ -96,6 +102,17 @@ class IterDataset(IterableDataset):
             for line in f:
                 sample = json.loads(line.strip())
                 yield sample
+
+
+def print_paras(model:torch.nn.Module):
+    """打印模型参数"""
+    total_paras = 0
+    for key, value in model.state_dict().items():
+    # for para in list(model.parameters()):
+        value:torch.Tensor
+        print(key, value.shape, value.numel())
+        total_paras += value.numel()
+    print("total_paras: ", total_paras)
 
 
 def save_model_parameter(state_dict: dict, save_path: str):

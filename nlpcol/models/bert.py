@@ -134,7 +134,9 @@ class MultiHeadAttentionLayer(nn.Module):
             x (Tensor): B*L*H
         """
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)   
-        x = x.view(new_x_shape)  # torch.view 只能用于连续的张量  torch.reshape 可以用于不连续的张量  x_t.is_contiguous()  x:  B*L*num_head*head_size
+        x = x.view(new_x_shape)  
+        # torch.view 只能用于连续的张量  torch.reshape 可以用于不连续的张量  x_t.is_contiguous()  x:  B*L*num_head*head_size
+        # view 的过程可以简单地理解为先将张量进行拉平（变成一维），然后再按照指定的新形状进行重塑
         return x.permute(0, 2, 1, 3)  # x:  B*num_head*L*head_size
 
     def forward(self, query, key, value, key_mask):
@@ -144,7 +146,7 @@ class MultiHeadAttentionLayer(nn.Module):
             query (_type_): B*L*H
             key (_type_): B*L*H
             value (_type_): B*L*H
-            key_mask (_type_): _description_
+            key_mask (_type_): [btz, 1, 1, seq_len]
         """
         # 线性变换
         query_layer = self.query(query)
@@ -380,8 +382,12 @@ class BertModel(BaseModel):
         # ========================= attention_mask =========================
         if attention_mask is None:
             attention_mask = (input_ids != self.config.pad_token_id).long() # bert默认0为mask_value
-            # 目的是为了适配多头注意力机制，从 [batch_size, to_seq_length]
+            # 目的是为了适配多头注意力机制，[batch_size, to_seq_length] -> [batch_size, 1, 1, to_seq_length]
             # 广播到[batch_size, num_heads, from_seq_length, to_seq_length]尺寸
+            # bert源码中注明不考虑from_tensor的mask。因为在下游任务如ner中，也会对超出input_ids的部分忽略处理。
+            # We don't assume that `from_tensor` is a mask (although it could be). We
+            # don't actually care if we attend *from* padding tokens (only *to* padding)
+            # tokens so we create a tensor of all ones.
             attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
 
         embedding_output = self.embeddings(input_ids, token_type_ids, position_ids)

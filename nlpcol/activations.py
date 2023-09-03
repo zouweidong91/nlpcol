@@ -11,6 +11,8 @@ def _gelu_python(x):
     information: OpenAI GPT's GELU is slightly different (and gives slightly different results): 0.5 * x * (1 +
     torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3)))) This is now written in C in nn.functional
     Also see the Gaussian Error Linear Units paper: https://arxiv.org/abs/1606.08415
+    torch.erf 高斯误差函数
+    正态分布的累积分布函数CDF = 0.5 * (1.0 + torch.erf(x / math.sqrt(2.0)))    CDF(0) = 0.5
     """
     return x * 0.5 * (1.0 + torch.erf(x / math.sqrt(2.0)))
 

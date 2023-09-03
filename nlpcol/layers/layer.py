@@ -1,10 +1,13 @@
 
+from typing import Optional
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Size, Tensor
-from typing import Optional
-import numpy as np
+
+from .pe import RotaryPositionalEmbedding
 
 
 class LayerNorm(nn.Module):
@@ -42,47 +45,6 @@ class LayerNorm(nn.Module):
         return self.weight * o + self.bias
 
 
-class SinusoidalPositionalEmbedding(nn.Module):
-    """定义Sin-Cos位置Embedding
-    """
-    def __init__(self, max_position:int, embedding_size:int):
-        """_summary_
-
-        Args:
-            max_position (int): 位置长度
-            embedding_size (int): 位置编码 hidden_size
-        """
-        super().__init__()
-        position_enc = self.get_sinusoid_encoding_table(max_position, embedding_size)
-        self.embeddings_table = nn.Embedding.from_pretrained(position_enc, freeze=True)
-    
-    def get_sinusoid_encoding_table(self, max_position, embedding_size):
-        # First part of the PE function: sin and cos argument
-        # np.sin(pos/(np.power(10000, 2i/d_model)))  dim 2i
-        # np.cos(pos/(np.power(10000, 2i/d_model)))  dim 2i+1
-        position_enc = torch.tensor(
-            [[pos / np.power(10000, 2 * (j // 2) / embedding_size) for j in range(embedding_size)]
-            for pos in range(max_position)]
-        ).float()
-        # Second part, apply the cosine to even columns and sin to odds.
-        position_enc[:, ::2] = torch.sin(position_enc[:, ::2])
-        position_enc[:, 1::2] = torch.cos(position_enc[:, 1::2])
-        return position_enc
-    
-    def forward(self,position_ids:Tensor) -> Tensor:
-        return self.embeddings_table(position_ids)
-
-
-class RotaryPositionalEmbedding(nn.Module):
-    """旋转式位置编码:https://kexue.fm/archives/8265
-    """
-    def __init__(self, embedding_size:int):
-        super().__init__()
-
-
-
-
-
 class GlobalPointer(nn.Module):
         """全局指针模块
         将序列的每个(start, end)作为整体来进行判断
@@ -90,17 +52,53 @@ class GlobalPointer(nn.Module):
         参考：https://kexue.fm/archives/8373
         """
         def __init__(self, hidden_size, heads, head_size, RoPE=True, use_bias=True, tril_mask=True):
-             super().__init__()
-             self.heads = heads
-             self.head_size = head_size
-             self.RoPE = RoPE
-             self.tril_mask = tril_mask
+            super().__init__()
+            self.heads = heads
+            self.head_size = head_size
+            self.RoPE = RoPE
+            self.tril_mask = tril_mask
 
-             self.dense = nn.Linear(hidden_size, heads * head_size * 2, bias=use_bias)
-             if self.RoPE:
-                self.position
-                
+            self.dense = nn.Linear(hidden_size, heads * head_size * 2, bias=use_bias) # 此处当然可以用两个[heads * head_size] self.dense代替
+            if self.RoPE:
+                self.position_embedding = RotaryPositionalEmbedding(head_size)
+            
+        def forward(self, inputs:Tensor, mask:Tensor=None) -> Tensor:
+            """类似于attention的处理方式
+            Args:
+                inputs (Tensor): shape=[btz, seq_len, hdsz]
+                mask (_type_, optional): shape=[btz, seq_len], padding部分为0
+            return: shape=[btz, heads, seq_len, seq_len]
+            """
+            sequence_output = self.dense(inputs) # [btz, seq_len, heads * head_size * 2]
+            # stack dim=-2， 表示stack后-2维度为self.heads
+            sequence_output = torch.stack(torch.chunk(sequence_output, self.heads, dim=-1), dim=-2) # [btz, seq_len, heads, head_size*2] 
+            qw, kw = sequence_output[..., :self.head_size], sequence_output[..., self.head_size:] # qk, kw: [btz, seq_len, heads, head_size]
 
-             
-        
+            if self.RoPE:
+                qw = self.position_embedding(qw.transpose(1, 2), seq_dim=-2).transpose(1, 2)
+                kw = self.position_embedding(kw.transpose(1, 2), seq_dim=-2).transpose(1, 2)
 
+            # 计算内积
+            logits = torch.einsum('bmhd,bnhd->bhmn', qw, kw) # [btz, heads, seq_len, seq_len]
+
+            # 排除padding 要分别在最后2个seq_len维度上做mask
+            if mask is not None:
+                attention_mask1 = 1 - mask.unsqueeze(1).unsqueeze(3) # [btz, 1, seq_len, 1]
+                attention_mask2 = 1 - mask.unsqueeze(1).unsqueeze(2) # [btz, 1, 1, seq_len]
+                logits = logits.masked_fill(attention_mask1.bool(), value=-float('inf')) # 填充为负无穷大，后续计算loss时忽略这部分数据
+                logits = logits.masked_fill(attention_mask2.bool(), value=-float('inf'))
+
+            # 排除下三角
+            # torch.tril(torch.ones(3, 3), -1)
+            # ([[0., 0., 0.],
+            #   [1., 0., 0.],
+            #   [1., 1., 0.]])
+            if self.tril_mask:
+                logits -= torch.tril(torch.ones_like(logits), -1) * 1e12
+
+            # scale返回
+            return logits / self.head_size ** 0.5
+
+
+
+            

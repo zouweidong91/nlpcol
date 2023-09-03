@@ -29,7 +29,7 @@ model_parameter_diff(
 ) 
 
 
-token_ids, segments_ids = tokenizer.encode("广东省的省会在[MASK][MASK]市。")
+token_ids, segments_ids = tokenizer.encode("湖北省省会在[MASK][MASK]市。")
 print(''.join(tokenizer.ids_to_tokens(token_ids)))
 
 tokens_ids_tensor = torch.tensor([token_ids, token_ids])
@@ -37,7 +37,6 @@ segment_ids_tensor = torch.tensor([segments_ids, segments_ids])
 
 bert_output:BertOutput = model.predict([tokens_ids_tensor, segment_ids_tensor])
 mlm_scores = bert_output.mlm_scores
-# print(mlm_scores)
 result = torch.argmax(mlm_scores[0, :], dim=-1).numpy()
 print(tokenizer.decode(result))
 

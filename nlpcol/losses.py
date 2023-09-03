@@ -6,6 +6,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Size, Tensor
 
+# 所有自定义Loss()，forward(pred, target) 传参顺序不能搞反了，
+# Trainer类中已经限定了
 
 class CrossEntropyLoss(nn.Module):
     """CrossEntropyLoss简单实现，只是为了和其他loss做对比
@@ -72,7 +74,7 @@ class MultilabelCategoricalCrossentropy(nn.Module):
         预测阶段则输出y_pred大于0的类。
     ref: https://kexue.fm/archives/7359
     """
-    def forward(self, y_true: Tensor, y_pred: Tensor) -> Tensor:
+    def forward(self, y_pred: Tensor, y_true: Tensor) -> Tensor:
         """
         Args:
             y_true (Tensor): shape=[..., num_classes]

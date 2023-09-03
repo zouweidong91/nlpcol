@@ -6,7 +6,7 @@ import os
 from nlpcol.config import TrainConfig
 
 
-def model_name_gene(train_config:TrainConfig, model_name, dataset_name) -> str:
+def model_name_gene(train_config:TrainConfig, model_name, dataset_name, prefix:str='test') -> str:
     """训练过程模型名字生成
 
     Args:
@@ -19,7 +19,7 @@ def model_name_gene(train_config:TrainConfig, model_name, dataset_name) -> str:
     """
     model_dir = f"/home/tmp/{model_name}/{dataset_name}/"
     os.makedirs(model_dir, exist_ok=True)
-    model_name = '{}_{}_{}.bin'.format('test', train_config.batch_size, train_config.epochs)  # 定义模型名字
+    model_name = '{}_{}_{}.bin'.format(prefix, train_config.batch_size, train_config.epochs)  # 定义模型名字
     save_path = os.path.join(model_dir, model_name)
     print("saved model path: ", save_path)
     return save_path
