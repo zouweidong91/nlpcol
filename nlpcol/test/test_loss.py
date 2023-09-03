@@ -50,7 +50,7 @@ class LayerTest(unittest.TestCase):
         logits = torch.rand((batch_size, num_classes))
         y_pred = F.softmax(logits, dim=1)
 
-        output = loss(y_true, y_pred)
+        output = loss(y_pred, y_true)
         print(output)
         
 

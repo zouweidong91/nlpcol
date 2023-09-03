@@ -28,7 +28,7 @@ class LayerTest(unittest.TestCase):
     def test_RotaryPositionalEmbedding(self):
         """旋转式位置编码"""
         torch.manual_seed(42)
-        r = RotaryPositionalEmbedding(100, 64)
+        r = RotaryPositionalEmbedding(64)
         qw = torch.randn(12, 3, 100, 64)
         o = r(qw)
         print(o[0][0][0])
@@ -50,7 +50,7 @@ class LayerTest(unittest.TestCase):
         mask[1][2:] = 0  # 在第二个样本中，后三个位置是padding
 
         # 根据您提供的代码进行注意力屏蔽操作
-        attention_mask1 = 1 - mask.unsqueeze(3)  # [btz, 1, seq_len, 1]
+        attention_mask1 = 1 - mask.unsqueeze(1)  # [btz, 1, seq_len, 1]
         attention_mask2 = 1 - mask.unsqueeze(2)  # [btz, 1, 1, seq_len]
 
         # 使用屏蔽操作将注意力分数矩阵中的一些位置设为负无穷大
