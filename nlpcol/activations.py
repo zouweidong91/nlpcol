@@ -17,6 +17,14 @@ def _gelu_python(x):
     return x * 0.5 * (1.0 + torch.erf(x / math.sqrt(2.0)))
 
 
+def _gelu_new(x):
+    """
+    Implementation of the GELU activation function currently in Google BERT repo (identical to OpenAI GPT). Also see
+    the Gaussian Error Linear Units paper: https://arxiv.org/abs/1606.08415
+    """
+    return 0.5 * x * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3.0))))
+
+
 if version.parse(torch.__version__) < version.parse("1.4"):
     gelu = _gelu_python
 else:
@@ -26,6 +34,8 @@ else:
 ACT2FN = {
     "relu": nn.functional.relu,  # max(0, x)
     "gelu": gelu,
+    "tanh": torch.tanh,
+    "gelu_new": _gelu_new,
     "softmax": nn.Softmax(dim=-1)
 }
 

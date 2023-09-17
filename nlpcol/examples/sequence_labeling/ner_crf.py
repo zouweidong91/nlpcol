@@ -93,6 +93,8 @@ class Model(nn.Module):
     def predict(self, token_ids):
         self.eval()
         emission_score, attention_mask = self.forward(token_ids)
+        emission_score[:, 0, 1:] = - 1e12 # cls和sep为强制转为O  O必须是第一个标签
+        emission_score[:, -1, 1:] = - 1e12
         best_path = self.crf.decode(emission_score, attention_mask)  # [btz, seq_len]
         best_path = torch.tensor(sequence_padding(best_path), device=device)
         return best_path

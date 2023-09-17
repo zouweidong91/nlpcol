@@ -4,9 +4,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from nlpcol.layers.layer import GlobalPointer
+from nlpcol.layers.layer import GlobalPointer, T5LayerNorm
 from nlpcol.layers.pe import (RotaryPositionalEmbedding,
-                              SinusoidalPositionalEmbedding)
+                              SinusoidalPositionalEmbedding,
+                              RelativePositionalEmbeddingT5)
 from torch import Size, Tensor
 
 random_seed = 42
@@ -77,6 +78,20 @@ class LayerTest(unittest.TestCase):
         mask[1][2:] = 0
         o:Tensor = gp(inputs, mask)
         self.assertListEqual(list(o.shape), [btz, heads, seq_len, seq_len])
+
+    def test_T5LayerNorm(self):
+        input = torch.randn(2,4)
+        rms_norm = T5LayerNorm(4)
+        o = rms_norm(input)
+        print(o)
+
+
+    def test_RelativePositionalEmbeddingT5(self):
+        pe = RelativePositionalEmbeddingT5(10, 10, 32)
+        o = pe(10, 10)
+        print()
+
+
 
 
 if __name__ == '__main__':

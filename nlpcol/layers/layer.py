@@ -45,6 +45,23 @@ class LayerNorm(nn.Module):
         return self.weight * o + self.bias
 
 
+class T5LayerNorm(nn.Module):
+    def __init__(self, hidden_size, eps=1e-12):
+        """t5使用的是RMSnorm (Root Mean Square)
+        No bias and no subtraction of mean
+        """
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.eps = eps
+
+    def forward(self, input:Tensor) -> Tensor:
+        # 与layerNorm相比，RMS Norm的主要区别在于去掉了减去均值的部分
+        var = input.float().pow(2).mean(-1, keepdim=True)
+        o = (input.float() / torch.sqrt(var + self.eps)).type_as(input)
+
+        return self.weight * o
+
+
 class GlobalPointer(nn.Module):
         """全局指针模块
         将序列的每个(start, end)作为整体来进行判断

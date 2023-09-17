@@ -8,6 +8,7 @@ import torch
 from nlpcol.utils._file import FileTool
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset, IterableDataset
+import sentencepiece as spm
 
 
 def seed_everything(seed:int=42):
@@ -192,3 +193,18 @@ def text_segmentate(text, maxlen, seps='\n', strips=None):
         return texts
     else:
         return [text]
+
+
+def expoer_vocab_from_spm(spm_path:str, vocab_path:str):
+    """从sp_model到处词典，方便查看
+    """
+    sp_model = spm.SentencePieceProcessor()
+    sp_model.Load(spm_path)
+    vocab_size = sp_model.get_piece_size()
+
+    with open(vocab_path, 'w', encoding='utf8') as f:
+        for i in range(vocab_size):
+            token = sp_model.id_to_piece(i)
+            f.write(
+                f"{token}\t{str(i)}\n"
+            )

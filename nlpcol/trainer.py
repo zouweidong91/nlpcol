@@ -133,8 +133,11 @@ class Trainer:
         self.callbacks.on_train_end()
         print("Train Done")
         
-    @torch.no_grad()
+    @torch.no_grad() # 不保存中间的计算结果
     def predict(self, X:list):
+        # 推理阶段不加with torch.no_grad():操作， 显存会显著上升:
+        # 激活显存：在模型的前向传播期间，激活值（activations, 即网络层的输出）需要存储在显存中，以便在进行反向传播时用于计算梯度。如果模型非常深，包含多个层次结构，这些激活值可能会占用大量显存。
+        # 中间计算：某些模型或操作可能会在前向传播期间生成大量的中间计算结果，这些中间计算也需要存储在显存中。
         # model.eval() 不启用 Batch Normalization 和 Dropout。
         self.model.eval()
         output = self.model(*X)

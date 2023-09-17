@@ -3,6 +3,7 @@ from typing import Optional
 
 import numpy as np
 import torch
+import math
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Size, Tensor
@@ -79,5 +80,65 @@ class RotaryPositionalEmbedding(nn.Module):
         return qw * cos + qw2 * sin
 
 
+class RelativePositionalT5(nn.Module):
+    """Google T5的相对位置编码
+    来自论文：https://arxiv.org/abs/1910.10683
+    本质是在attention score上加一个可训练的偏置项
+    """
+    def __init__(self, qlen, klen, num_buckets:int, max_distance:int=128, is_decoder=False):
+        """
+        Args:
+            qlen (_type_): query length
+            klen (_type_): key length
+            num_buckets (int): 相对位置编码分桶数量
+            is_decoder (bool, optional): 是否是decoder. Defaults to False.
+        """
+        super().__init__()
+        context_position = torch.arange(qlen, dtype=torch.long)[:, None]
+        memory_position = torch.arange(klen, dtype=torch.long)[None, :]
+        relative_position = memory_position - context_position # (qlen, klen)
+        self.relative_position = self._relative_position_bucket(
+            relative_position,
+            bidirectional = not is_decoder,
+            num_buckets = num_buckets,
+            max_distance = max_distance,
+        )
+
+    @staticmethod
+    def _relative_position_bucket(relative_position, bidirectional=True, num_buckets=32, max_distance=128):
+        """
+        比较邻近的位置（0～7），需要比较得精细一些，所以给它们都分配一个独立的位置编码，至于稍远的位置（比如8～11），我们不用区分得太清楚，
+        所以它们可以共用一个位置编码，距离越远，共用的范围就可以越大，直到达到指定范围再clip
+        Returns:
+            a Tensor with the same shape as relative_position, containing int32 values in the range [0, num_buckets)
+        """
+        relative_buckets = 0
+        if bidirectional:
+            num_buckets //= 2
+            relative_buckets += (relative_position > 0).to(torch.long) * num_buckets
+            relative_position = torch.abs(relative_position)
+        else:
+            relative_position = -torch.min(relative_position, torch.zeros_like(relative_position))
+        # now relative_position is in the range [0, inf)
+
+        # half of the buckets are for exact increments in positions
+        max_exact = num_buckets // 2
+        is_small = relative_position < max_exact
+
+        # The other half of the buckets are for logarithmically bigger bins in positions up to max_distance
+        relative_position_if_large = max_exact + (
+            torch.log(relative_position.float() / max_exact)
+            / math.log(max_distance / max_exact)
+            * (num_buckets - max_exact)
+        ).to(torch.long)
+        relative_position_if_large = torch.min(
+            relative_position_if_large, torch.full_like(relative_position_if_large, num_buckets - 1)
+        )
+
+        relative_buckets += torch.where(is_small, relative_position, relative_position_if_large)
+        return relative_buckets
+
+    def forward(self):
+        return self.relative_position
 
 

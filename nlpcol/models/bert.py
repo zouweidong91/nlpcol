@@ -193,23 +193,25 @@ class AttentionOutput(nn.Module):
             context_layer (Tensor): attention层的输出结果
             input_tensor (Tensor): BertEmbeddings层的输出
         """
-        context_layer = self.dense(context_layer)
-        context_layer = self.dropout(context_layer)
-        context_layer = self.LayerNorm(context_layer + input_tensor)
-        return context_layer
+        output_layer = self.dense(context_layer)
+        output_layer = self.dropout(output_layer)
+        output_layer = self.LayerNorm(output_layer + input_tensor)
+        return output_layer
         
+
+# TODO  合并FeedForward和FFNOutput
 class FeedForward(nn.Module):
     """前馈层
     """
     def __init__(self, config:Config):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.intermediate_size)
-        self.intermediate_act_fn = get_activation(config.hidden_act)
+        self.act = get_activation(config.hidden_act)
 
-    def forward(self, hidden_state: Tensor) -> Tensor:
-        hidden_state = self.dense(hidden_state)
-        hidden_state = self.intermediate_act_fn(hidden_state)
-        return hidden_state
+    def forward(self, hidden_states: Tensor) -> Tensor:
+        hidden_states = self.dense(hidden_states)
+        hidden_states = self.act(hidden_states)
+        return hidden_states
 
 class FFNOutput(nn.Module):
     """顺序为： Drop --> Add --> LayerNorm
@@ -220,20 +222,20 @@ class FFNOutput(nn.Module):
         self.LayerNorm = LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-    def forward(self, hidden_state: Tensor, input_tensor: Tensor) -> Tensor:
+    def forward(self, hidden_states: Tensor, input_tensor: Tensor) -> Tensor:
         """_summary_
 
         Args:
-            hidden_state (Tensor): FeedForward的输出结果
+            hidden_states (Tensor): FeedForward的输出结果
             input_tensor (Tensor): AttentionOutput的输出结果
 
         Returns:
             Tensor: _description_
         """
-        hidden_state = self.dense(hidden_state)
-        hidden_state = self.dropout(hidden_state)
-        hidden_state = self.LayerNorm(hidden_state + input_tensor)
-        return hidden_state
+        hidden_states = self.dense(hidden_states)
+        hidden_states = self.dropout(hidden_states)
+        hidden_states = self.LayerNorm(hidden_states + input_tensor)
+        return hidden_states
 
 
 class BertLayer(nn.Module):
@@ -276,9 +278,7 @@ class BertEncoder(nn.Module):
         all_hidden_states = [hidden_states]
 
         for i, layer_module in enumerate(self.layers):
-            layer_output = layer_module(hidden_states, attention_mask)
-            hidden_states = layer_output
-
+            hidden_states = layer_module(hidden_states, attention_mask)
             all_hidden_states.append(hidden_states)
 
         return BertEncoderOutput(
@@ -390,8 +390,8 @@ class BertModel(BaseModel):
             # tokens so we create a tensor of all ones.
             attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
 
-        embedding_output = self.embeddings(input_ids, token_type_ids, position_ids)
-        encoder_output:BertEncoderOutput = self.encoder(embedding_output, attention_mask)
+        input_embedding = self.embeddings(input_ids, token_type_ids, position_ids)
+        encoder_output:BertEncoderOutput = self.encoder(input_embedding, attention_mask)
         hidden_states = encoder_output.last_hidden_state
         pooled_output, nsp_scores, mlm_scores = None, None, None
 
@@ -416,8 +416,6 @@ class BertModel(BaseModel):
         """
         不同代码参数命名不同，需要做参数映射   new_key: old_key
         """
-        num_hidden_layers = 12
-
         mapping = {
             'embeddings.word_embeddings.weight':  f'{prefix}.embeddings.word_embeddings.weight',
             'embeddings.position_embeddings.weight':  f'{prefix}.embeddings.position_embeddings.weight',
@@ -437,7 +435,7 @@ class BertModel(BaseModel):
             'mlm.decoder.bias': 'cls.predictions.bias'
         }
 
-        for i in range(num_hidden_layers):
+        for i in range(self.config.num_hidden_layers):
             prefix_i = f'{prefix}.encoder.layer.%d.' % i
 
             mapping.update(
