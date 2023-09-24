@@ -24,6 +24,7 @@ class CrossEntropyLoss(nn.Module):
         target标签值class，并不参与直接计算，而是作为一个索引,索引对象为实际类别
         假设输入target = torch.tensor([0]) input=torch.Tensor([[-0.7715, -0.6205,-0.2562]])， target为0
         loss = -x[0]+log(exp(x[0])+exp(x[1])+exp(x[2])) 
+        loss = 0.7715+log(exp(−0.7715)+exp(−0.6205)+exp(−0.2562)=1.3447266007601868
 
         Args:
             input (Tensor): shape=[N, C]

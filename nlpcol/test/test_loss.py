@@ -32,6 +32,26 @@ class LayerTest(unittest.TestCase):
         self.assertEqual(output_1, output_2)
 
 
+    def test_lm_loss(self):
+        """生成模型计算交叉熵的示例"""
+        torch.manual_seed(42)
+        # 假设词汇表大小为 10，序列长度为 5，批次大小为 2
+        vocab_size = 10
+        sequence_length = 5
+        batch_size = 2
+
+        lm_logits = torch.randn(batch_size, sequence_length, vocab_size)
+        labels = torch.randint(0, vocab_size, (batch_size, sequence_length))
+        # loss_fct = nn.CrossEntropyLoss()
+        loss_fct = CrossEntropyLoss()
+
+        # 计算损失
+        loss = loss_fct(lm_logits.view(-1, vocab_size), labels.view(-1))  # (btz*seq_len, vocab_size)   (btz*seq_len)
+        print("lm_logits 的形状：", lm_logits.shape)
+        print("labels 的形状：", labels.shape)
+        print("损失值：", loss.item())
+
+
     def test_MultilabelCategoricalCrossentropy(self):
         """多标签分类的交叉熵"""
         loss = MultilabelCategoricalCrossentropy()

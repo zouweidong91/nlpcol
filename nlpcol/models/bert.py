@@ -352,8 +352,9 @@ class BertModel(BaseModel):
         with_pool = False, # 是否包含pool部分
         with_nsp = False,  # 是否包含nsp部分
         with_mlm = False,  # 是否包含mlm部分
+        **kwargs
     ):
-        super().__init__()
+        super().__init__(**kwargs)
         self.config = config = Config(**config)
         self.with_pool = with_pool
         self.with_nsp = with_nsp
@@ -412,10 +413,11 @@ class BertModel(BaseModel):
             last_hidden_state = encoder_output.last_hidden_state
         )
 
-    def variable_mapping(self, prefix = 'bert'):
+    def variable_mapping(self):
         """
         不同代码参数命名不同，需要做参数映射   new_key: old_key
         """
+        prefix = 'bert'
         mapping = {
             'embeddings.word_embeddings.weight':  f'{prefix}.embeddings.word_embeddings.weight',
             'embeddings.position_embeddings.weight':  f'{prefix}.embeddings.position_embeddings.weight',

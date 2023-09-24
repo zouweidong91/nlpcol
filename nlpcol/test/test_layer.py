@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from nlpcol.layers.layer import GlobalPointer, T5LayerNorm
 from nlpcol.layers.pe import (RotaryPositionalEmbedding,
                               SinusoidalPositionalEmbedding,
-                              RelativePositionalEmbeddingT5)
+                              RelativePositionalT5)
 from torch import Size, Tensor
 
 random_seed = 42
@@ -86,11 +86,10 @@ class LayerTest(unittest.TestCase):
         print(o)
 
 
-    def test_RelativePositionalEmbeddingT5(self):
-        pe = RelativePositionalEmbeddingT5(10, 10, 32)
-        o = pe(10, 10)
-        print()
-
+    def test_RelativePositionalT5(self):
+        pe = RelativePositionalT5(10, 10, 32)
+        o = pe.relative_position
+        print(o)
 
 
 

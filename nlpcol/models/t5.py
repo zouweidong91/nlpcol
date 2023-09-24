@@ -31,37 +31,44 @@ from .base import BaseModel
 # 15 %的破坏比；
 # 3 的破坏时小段长度。
 
+# T5.1.0和T5.1.1区别
+# FFN 把relu激活的第一个变化层改为了gelu激活的门控线性单元，这样FFN层增加了50%参数，但是从论文效果看效果明显增加
+# 此外，T5.1.1还对Embedding层做了改动，原来在T5.1.0中，
+# Encoder和Decoder的Embedding层、Decoder最后预测概率分布的Softmax层都是共享同一个Embedding矩阵的，
+# 现在T5.1.1只让Encoder和Decoder的Embedding层共享，而Decoder最后预测概率分布的Softmax层则用了一个独立的Embedding矩阵，
+# 当然这会让参数量大大增加，但Google的结论说这样做效果会更好
 
-# 实现原始mt5  t5没有中文预训练权重。用Mt5实现
 
+# 实现原始mt5  t5没有中文预训练权重。用Mt5实现 T5.1.1
 
-@dataclass
+# TODO 配置映射
 class Config:
     # 以下参数来自mt5 base config.json文件
     # 显式声明，支持下文自动补全
-    architectures: str
-    d_ff: int
-    d_kv: int
-    d_model: int
-    decoder_start_token_id: int
-    dropout_rate: float
-    eos_token_id: int
-    feed_forward_proj: str
-    initializer_factor: float
-    is_encoder_decoder: bool
-    layer_norm_epsilon: float
-    model_type: str
-    num_decoder_layers: int
-    num_heads: int
-    num_layers: int
-    output_past: bool
-    pad_token_id: int
-    relative_attention_num_buckets: int
-    tie_word_embeddings: bool
-    tokenizer_class: str
-    use_cache: bool
-    vocab_size: int
-    is_decoder: bool  # 是否属于decoder
+    def __init__(self, **kwargs):
+        self.architectures: str = kwargs.get('architectures')
+        self.d_ff: int = kwargs.get('d_ff')
+        self.d_kv: int = kwargs.get('d_kv')
+        self.d_model: int = kwargs.get('d_model')
+        self.decoder_start_token_id: int = kwargs.get('decoder_start_token_id')
+        self.dropout_rate: float = kwargs.get('dropout_rate')
+        self.eos_token_id: int = kwargs.get('eos_token_id')
+        self.feed_forward_proj: str = kwargs.get('feed_forward_proj')
+        self.initializer_factor: float = kwargs.get('initializer_factor')
+        self.is_encoder_decoder: bool = kwargs.get('is_encoder_decoder')
+        self.layer_norm_epsilon: float = kwargs.get('layer_norm_epsilon')
+        self.model_type: str = kwargs.get('model_type')
+        self.num_decoder_layers: int = kwargs.get('num_decoder_layers')
+        self.num_heads: int = kwargs.get('num_heads')
+        self.num_layers: int = kwargs.get('num_layers')
+        self.output_past: bool = kwargs.get('output_past')
+        self.pad_token_id: int = kwargs.get('pad_token_id')
+        self.relative_attention_num_buckets: int = kwargs.get('relative_attention_num_buckets')
+        self.tie_word_embeddings: bool = kwargs.get('tie_word_embeddings')
+        self.tokenizer_class: str = kwargs.get('tokenizer_class')
+        self.use_cache: bool = kwargs.get('use_cache')
+        self.vocab_size: int = kwargs.get('vocab_size')
+        self.is_decoder: bool = False  # 是否属于decoder
 
 """
 {
@@ -143,9 +150,9 @@ class FFN(nn.Module):
         self.dropout = nn.Dropout(config.dropout_rate)
 
     def forward(self, hidden_states: Tensor) -> Tensor:
-        hidden_states = self.layer_norm(hidden_states)
-        hidden_states = self.ff(hidden_states)
-        hidden_states = hidden_states + self.dropout(hidden_states)
+        forwarded_states = self.layer_norm(hidden_states)
+        forwarded_states = self.ff(forwarded_states)
+        hidden_states = hidden_states + self.dropout(forwarded_states)  # add为标准化之前的hidden_states
         return hidden_states
 
 
@@ -153,6 +160,8 @@ class MultiHeadAttentionLayer(nn.Module):
     def __init__(self, config: Config, has_relative_attention_bias=False, is_decoder=False):
         super().__init__()
 
+        self.relative_attention_num_buckets = config.relative_attention_num_buckets
+        self.has_relative_attention_bias = has_relative_attention_bias
         self.is_decoder = is_decoder
         self.all_head_size = config.num_heads * config.d_kv
         self.num_attention_heads = config.num_heads
@@ -163,13 +172,13 @@ class MultiHeadAttentionLayer(nn.Module):
         self.v = nn.Linear(config.d_model, self.all_head_size, bias=False)
         self.dropout = nn.Dropout(config.dropout_rate)
 
-        if has_relative_attention_bias:
+        if has_relative_attention_bias: # 只有selfAtten时需要
             self.relative_attention_bias = nn.Embedding(config.relative_attention_num_buckets, config.num_heads)
 
-    def mask(self, inputs:Tensor, key_masks:Tensor):
+    def mask(self, inputs:Tensor, key_mask:Tensor):
         """其他Module继承支持重写mask函数
         inputs: [batch_size, num_heads, seq_len, seq_len]
-        key_masks: [batch_size, to_seq_length]
+        key_mask: [batch_size, to_seq_length]
         """
         if key_mask is not None:
             # 目的是为了适配多头注意力机制，[batch_size, to_seq_length] -> [batch_size, 1, 1, to_seq_length]
@@ -179,7 +188,7 @@ class MultiHeadAttentionLayer(nn.Module):
             # don't actually care if we attend *from* padding tokens (only *to* padding)
             # tokens so we create a tensor of all ones.
             # enc_self_att, dec_cross_att
-            key_masks = key_masks.unsqueeze(1).unsqueeze(2)
+            key_mask = key_mask.unsqueeze(1).unsqueeze(2)
         else:
             # dec_self_att 下三角矩阵
             seq_len = inputs.shape[-1]
@@ -196,7 +205,9 @@ class MultiHeadAttentionLayer(nn.Module):
         T5 位置编码通过在attention_scores上加一个可训练偏置项
         """
         qlen, klen = attention_scores.shape[2:]
-        relative_positions = RelativePositionalT5(qlen, klen, self.is_decoder)()
+        relative_positions = RelativePositionalT5(
+            qlen, klen, self.relative_attention_num_buckets, is_decoder=self.is_decoder
+        ).relative_position
         values:Tensor = self.relative_attention_bias(relative_positions)  # shape (qlen, klen, num_heads)
         values = values.permute([2, 0, 1]).unsqueeze(0)  #  (1, num_heads, qlen, klen)
         return attention_scores + values
@@ -269,18 +280,20 @@ class T5Layer(nn.Module):
     Decoder的顺序
         LN --> self_Att --> Add --> LN --> cross_Att --> Add --> LN --> FFN --> Add
     """
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, has_relative_attention_bias=False):
         super().__init__()
         self.is_decoder = config.is_decoder
         self.layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
-        self.multiHeadAttention = MultiHeadAttentionLayer(config, has_relative_attention_bias=True)  # TODO 确认是否为TRUE
-        self.attentionOutput = AttentionOutput(config)
-        self.ffn = FFN(config)
+        self.selfAttention = MultiHeadAttentionLayer(config, has_relative_attention_bias=True)
+        self.selfAttentionOutput = AttentionOutput(config)
 
         if self.is_decoder:
             self.layer_norm2 = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
-            self.crossAttention = MultiHeadAttentionLayer(config, has_relative_attention_bias=True, is_decoder=True)
+            self.crossAttention = MultiHeadAttentionLayer(config, is_decoder=True)
             self.crossAttentionOutput = AttentionOutput(config)
+
+        self.ffn = FFN(config)
+
 
     def forward(
         self, 
@@ -291,18 +304,18 @@ class T5Layer(nn.Module):
     ) -> Tensor:
 
         # self attention
-        hidden_states = self.layer_norm(hidden_states)
-        context_layer = self.multiHeadAttention(
-            hidden_states, hidden_states, hidden_states, attention_mask
+        normed_hidden_states = self.layer_norm(hidden_states)
+        context_layer = self.selfAttention(
+            normed_hidden_states, normed_hidden_states, normed_hidden_states, attention_mask
         )
-        hidden_states = self.attentionOutput(context_layer, hidden_states)
+        hidden_states = self.selfAttentionOutput(context_layer, hidden_states) # add为标准化之前的hidden_states
 
         # cross attention
         # query: selfattntion的输出   key_value： Encoder端的输出
         if self.is_decoder:
-            hidden_states = self.layer_norm2(hidden_states)
+            normed_hidden_states = self.layer_norm2(hidden_states)
             context_layer = self.crossAttention(
-                hidden_states, encoder_hidden_states, encoder_hidden_states, encoder_attention_mask
+                normed_hidden_states, encoder_hidden_states, encoder_hidden_states, encoder_attention_mask
             )
             hidden_states = self.crossAttentionOutput(context_layer, hidden_states)
 
@@ -317,11 +330,16 @@ class T5StackOutput:
 
 
 class T5Stack(nn.Module):
+    """
+    has_relative_attention_bias 只有第一层的selfAtten才需要相对位置编码
+    """
     def __init__(self, config: Config, embed:nn.Embedding):
         super().__init__()
         self.embed = embed
-        self.layers = nn.ModuleList([T5Layer(config) for _ in range(config.num_layers)])
-        self.layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
+        self.layers = nn.ModuleList(
+            [T5Layer(config, has_relative_attention_bias=bool(i==0)) for i in range(config.num_layers)]
+        )
+        self.final_layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
     def forward(
@@ -344,7 +362,7 @@ class T5Stack(nn.Module):
                 encoder_attention_mask
             )
 
-        hidden_states = self.layer_norm(hidden_states)
+        hidden_states = self.final_layer_norm(hidden_states)
         hidden_states = self.dropout(hidden_states)
         all_hidden_states.append(hidden_states)
 
@@ -356,16 +374,18 @@ class T5Stack(nn.Module):
 
 @dataclass
 class Seq2SeqLMOutput:
-    logits: torch.FloatTensor = None
+    lm_logits: torch.FloatTensor = None
+    encoder_last_hidden_state: torch.FloatTensor = None
+    decoder_last_hidden_state: torch.FloatTensor= None
     encoder_hidden_states: Optional[List[torch.FloatTensor]] = None
     decoder_hidden_states: Optional[List[torch.FloatTensor]] = None
 
 
-class T5Model(nn.Module):
-    def __init__(self, config: Config):
-        super().__init__()
-        self.config = config
-        embed = T5Embeddings(config) # 在enc和dec之间共享embedding
+class T5Model(BaseModel):
+    def __init__(self, config: Config, **kwargs):
+        super().__init__(**kwargs)
+        self.config = config = Config(**config)
+        embed = T5Embeddings(config) # 在enc和dec之间共享embedding, 不声明为self.embed,则模型参数中没有embed.weight这个权重
 
         enc_config = copy.deepcopy(config)
         enc_config.is_decoder = False
@@ -378,10 +398,6 @@ class T5Model(nn.Module):
 
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
-    def get_att_mask(self, input_ids:torch.LongTensor):
-        """获取self_att的mask
-        """
-        
 
     def forward(
         self,
@@ -402,11 +418,58 @@ class T5Model(nn.Module):
             encoder_attention_mask = attention_mask
         )
 
-        lm_logits = self.lm_head(dec_output)
+        lm_logits = self.lm_head(dec_output.last_hidden_state)
+
         
         return Seq2SeqLMOutput(
-            logits = lm_logits,
+            lm_logits = lm_logits,
+            encoder_last_hidden_state = enc_output.last_hidden_state,
+            decoder_last_hidden_state = dec_output.last_hidden_state,
             encoder_hidden_states = enc_output.hidden_states,
             decoder_hidden_states = dec_output.hidden_states,
         )
 
+
+    def variable_mapping(self):
+        """
+        不同代码参数命名不同，需要做参数映射   new_key: old_key
+        """
+        mapping = {
+            "encoder.embed.word_embeddings.weight": "encoder.embed_tokens.weight",
+            "decoder.embed.word_embeddings.weight": "decoder.embed_tokens.weight",
+            "encoder.layers.0.selfAttention.relative_attention_bias.weight": "encoder.block.0.layer.0.SelfAttention.relative_attention_bias.weight",
+            "decoder.layers.0.selfAttention.relative_attention_bias.weight": "decoder.block.0.layer.0.SelfAttention.relative_attention_bias.weight",
+        }
+
+        self_atten_fn = lambda stack, i, j: {
+                    f"{stack}.layers.{i}.selfAttention.q.weight": f"{stack}.block.{i}.layer.{j}.SelfAttention.q.weight",
+                    f"{stack}.layers.{i}.selfAttention.k.weight": f"{stack}.block.{i}.layer.{j}.SelfAttention.k.weight",
+                    f"{stack}.layers.{i}.selfAttention.v.weight": f"{stack}.block.{i}.layer.{j}.SelfAttention.v.weight",
+                    f"{stack}.layers.{i}.selfAttentionOutput.dense.weight": f"{stack}.block.{i}.layer.{j}.SelfAttention.o.weight",
+                    f"{stack}.layers.{i}.layer_norm.weight": f"{stack}.block.{i}.layer.{j}.layer_norm.weight",
+                }
+        cross_atten_fn = lambda stack, i, j: {
+                    f"{stack}.layers.{i}.crossAttention.q.weight": f"{stack}.block.{i}.layer.{j}.EncDecAttention.q.weight",
+                    f"{stack}.layers.{i}.crossAttention.k.weight": f"{stack}.block.{i}.layer.{j}.EncDecAttention.k.weight",
+                    f"{stack}.layers.{i}.crossAttention.v.weight": f"{stack}.block.{i}.layer.{j}.EncDecAttention.v.weight",
+                    f"{stack}.layers.{i}.crossAttentionOutput.dense.weight": f"{stack}.block.{i}.layer.{j}.EncDecAttention.o.weight",
+                    f"{stack}.layers.{i}.layer_norm2.weight": f"{stack}.block.{i}.layer.{j}.layer_norm.weight",
+                }
+        ffn_fn = lambda stack, i, j: {
+                    f"{stack}.layers.{i}.ffn.ff.dense_1.weight": f"{stack}.block.{i}.layer.{j}.DenseReluDense.wi_0.weight",
+                    f"{stack}.layers.{i}.ffn.ff.dense_2.weight": f"{stack}.block.{i}.layer.{j}.DenseReluDense.wi_1.weight",
+                    f"{stack}.layers.{i}.ffn.ff.dense_output.weight": f"{stack}.block.{i}.layer.{j}.DenseReluDense.wo.weight",
+                    f"{stack}.layers.{i}.ffn.layer_norm.weight": f"{stack}.block.{i}.layer.{j}.layer_norm.weight",
+                }
+
+        for i in range(self.config.num_layers):
+            mapping.update(self_atten_fn('encoder', i, 0))
+            mapping.update(ffn_fn('encoder', i, 1))
+
+        for i in range(self.config.num_decoder_layers):
+            mapping.update(self_atten_fn('decoder', i, 0))
+            mapping.update(cross_atten_fn('decoder', i, 1))
+            mapping.update(ffn_fn('decoder', i, 2))
+
+        return mapping
+        

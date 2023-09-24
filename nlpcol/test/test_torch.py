@@ -19,3 +19,13 @@ class LayerTest(unittest.TestCase):
         print(torch.rand(1)) # 从0到1的均匀分布中随机抽取
         print(torch.rand(1))
         print(torch.randn(2, 3))  # 值从标准正态分布（均值为0，标准差为1）中随机抽取
+
+    def test_tril(self):
+        """下三角矩阵"""
+        len = 10
+        key_mask = torch.tril(
+            torch.ones(len, len, dtype=torch.long), diagonal=0
+        )
+        key_mask = key_mask.unsqueeze(0).unsqueeze(1)
+        print(key_mask)
+

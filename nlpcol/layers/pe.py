@@ -80,7 +80,7 @@ class RotaryPositionalEmbedding(nn.Module):
         return qw * cos + qw2 * sin
 
 
-class RelativePositionalT5(nn.Module):
+class RelativePositionalT5:
     """Google T5的相对位置编码
     来自论文：https://arxiv.org/abs/1910.10683
     本质是在attention score上加一个可训练的偏置项
@@ -93,7 +93,6 @@ class RelativePositionalT5(nn.Module):
             num_buckets (int): 相对位置编码分桶数量
             is_decoder (bool, optional): 是否是decoder. Defaults to False.
         """
-        super().__init__()
         context_position = torch.arange(qlen, dtype=torch.long)[:, None]
         memory_position = torch.arange(klen, dtype=torch.long)[None, :]
         relative_position = memory_position - context_position # (qlen, klen)
@@ -137,8 +136,5 @@ class RelativePositionalT5(nn.Module):
 
         relative_buckets += torch.where(is_small, relative_position, relative_position_if_large)
         return relative_buckets
-
-    def forward(self):
-        return self.relative_position
 
 
