@@ -50,7 +50,7 @@ class BaseModel(nn.Module):
                 continue
 
 
-        self.load_state_dict(state_dict_new, strict=True)
+        self.load_state_dict(state_dict_new, strict=False)
 
     def variable_mapping(self) -> dict:
         """构建moedl变量与checkpoint权重变量间的映射

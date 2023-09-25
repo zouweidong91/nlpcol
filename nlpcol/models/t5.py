@@ -33,8 +33,8 @@ from .base import BaseModel
 
 # T5.1.0和T5.1.1区别
 # FFN 把relu激活的第一个变化层改为了gelu激活的门控线性单元，这样FFN层增加了50%参数，但是从论文效果看效果明显增加
-# 此外，T5.1.1还对Embedding层做了改动，原来在T5.1.0中，
-# Encoder和Decoder的Embedding层、Decoder最后预测概率分布的Softmax层都是共享同一个Embedding矩阵的，
+# 此外，T5.1.1还对Embedding层做了改动，
+# 原来在T5.1.0中，Encoder和Decoder的Embedding层、Decoder最后预测概率分布的Softmax层都是共享同一个Embedding矩阵的，
 # 现在T5.1.1只让Encoder和Decoder的Embedding层共享，而Decoder最后预测概率分布的Softmax层则用了一个独立的Embedding矩阵，
 # 当然这会让参数量大大增加，但Google的结论说这样做效果会更好
 
@@ -161,17 +161,17 @@ class MultiHeadAttentionLayer(nn.Module):
         super().__init__()
 
         self.relative_attention_num_buckets = config.relative_attention_num_buckets
-        self.has_relative_attention_bias = has_relative_attention_bias
         self.is_decoder = is_decoder
         self.all_head_size = config.num_heads * config.d_kv
-        self.num_attention_heads = config.num_heads
-        self.attention_head_size = config.d_kv
+        self.num_heads = config.num_heads
+        self.head_size = config.d_kv
 
         self.q = nn.Linear(config.d_model, self.all_head_size, bias=False)
         self.k = nn.Linear(config.d_model, self.all_head_size, bias=False)
         self.v = nn.Linear(config.d_model, self.all_head_size, bias=False)
         self.dropout = nn.Dropout(config.dropout_rate)
 
+        self.relative_attention_bias = None
         if has_relative_attention_bias: # 只有selfAtten时需要
             self.relative_attention_bias = nn.Embedding(config.relative_attention_num_buckets, config.num_heads)
 
@@ -202,8 +202,11 @@ class MultiHeadAttentionLayer(nn.Module):
 
     def applay_att_score_bias(self, attention_scores:Tensor) -> Tensor:
         """
-        T5 位置编码通过在attention_scores上加一个可训练偏置项
+        T5 位置编码通过在attention_scores上加一个可训练偏置项  TODO relative_positions重复计算，需优化
         """
+        if self.relative_attention_bias is None:
+            return attention_scores
+
         qlen, klen = attention_scores.shape[2:]
         relative_positions = RelativePositionalT5(
             qlen, klen, self.relative_attention_num_buckets, is_decoder=self.is_decoder
@@ -213,7 +216,7 @@ class MultiHeadAttentionLayer(nn.Module):
         return attention_scores + values
 
     def transpose_for_scores(self, x: Tensor) -> Tensor:
-        new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)   
+        new_x_shape = x.size()[:-1] + (self.num_heads, self.head_size)   
         x = x.view(new_x_shape)  
         # torch.view 只能用于连续的张量  torch.reshape 可以用于不连续的张量  x_t.is_contiguous()  x:  B*L*num_head*head_size
         # view 的过程可以简单地理解为先将张量进行拉平（变成一维），然后再按照指定的新形状进行重塑
@@ -284,7 +287,7 @@ class T5Layer(nn.Module):
         super().__init__()
         self.is_decoder = config.is_decoder
         self.layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
-        self.selfAttention = MultiHeadAttentionLayer(config, has_relative_attention_bias=True)
+        self.selfAttention = MultiHeadAttentionLayer(config, has_relative_attention_bias=has_relative_attention_bias)
         self.selfAttentionOutput = AttentionOutput(config)
 
         if self.is_decoder:
@@ -339,6 +342,10 @@ class T5Stack(nn.Module):
         self.layers = nn.ModuleList(
             [T5Layer(config, has_relative_attention_bias=bool(i==0)) for i in range(config.num_layers)]
         )
+        
+        for layer in self.layers[1:]:
+            layer.selfAttention.relative_attention_bias = self.layers[0].selfAttention.relative_attention_bias # relative_attention_bias权重共享
+
         self.final_layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 

@@ -91,6 +91,7 @@ class RelativePositionalT5:
             qlen (_type_): query length
             klen (_type_): key length
             num_buckets (int): 相对位置编码分桶数量
+            max_distance(int): 相对位置编码的最大相对距离
             is_decoder (bool, optional): 是否是decoder. Defaults to False.
         """
         context_position = torch.arange(qlen, dtype=torch.long)[:, None]
