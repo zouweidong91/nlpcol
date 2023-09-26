@@ -69,6 +69,7 @@ class Config:
         self.use_cache: bool = kwargs.get('use_cache')
         self.vocab_size: int = kwargs.get('vocab_size')
         self.is_decoder: bool = False  # 是否属于decoder
+        self.max_seq_length:int = kwargs.get('max_seq_length', 512)  # 需要大于max(tar_len, src_len)， 相对位置编码用
 
 """
 {
@@ -172,8 +173,12 @@ class MultiHeadAttentionLayer(nn.Module):
         self.dropout = nn.Dropout(config.dropout_rate)
 
         self.relative_attention_bias = None
-        if has_relative_attention_bias: # 只有selfAtten时需要
+        if has_relative_attention_bias: # 只有selfAtten时需要，且仅第0层初始化，其它层共享权重。
             self.relative_attention_bias = nn.Embedding(config.relative_attention_num_buckets, config.num_heads)
+            print(config.max_seq_length)
+            self.relative_position = RelativePositionalT5(
+                config.max_seq_length, config.max_seq_length, self.relative_attention_num_buckets, is_decoder=self.is_decoder
+            )
 
     def mask(self, inputs:Tensor, key_mask:Tensor):
         """其他Module继承支持重写mask函数
@@ -204,14 +209,12 @@ class MultiHeadAttentionLayer(nn.Module):
         """
         T5 位置编码通过在attention_scores上加一个可训练偏置项  TODO relative_positions重复计算，需优化
         """
-        if self.relative_attention_bias is None:
+        if self.relative_attention_bias is None:  # crossAtten不需要位置编码
             return attention_scores
 
         qlen, klen = attention_scores.shape[2:]
-        relative_positions = RelativePositionalT5(
-            qlen, klen, self.relative_attention_num_buckets, is_decoder=self.is_decoder
-        ).relative_position
-        values:Tensor = self.relative_attention_bias(relative_positions)  # shape (qlen, klen, num_heads)
+        relative_position = self.relative_position(qlen, klen)
+        values:Tensor = self.relative_attention_bias(relative_position)  # shape (qlen, klen, num_heads)
         values = values.permute([2, 0, 1]).unsqueeze(0)  #  (1, num_heads, qlen, klen)
         return attention_scores + values
 
@@ -345,6 +348,7 @@ class T5Stack(nn.Module):
         
         for layer in self.layers[1:]:
             layer.selfAttention.relative_attention_bias = self.layers[0].selfAttention.relative_attention_bias # relative_attention_bias权重共享
+            layer.selfAttention.relative_position = self.layers[0].selfAttention.relative_position
 
         self.final_layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
@@ -391,7 +395,7 @@ class Seq2SeqLMOutput:
 class T5Model(BaseModel):
     def __init__(self, config: Config, **kwargs):
         super().__init__(**kwargs)
-        self.config = config = Config(**config)
+        self.config = config = Config(**config, **kwargs)
         embed = T5Embeddings(config) # 在enc和dec之间共享embedding, 不声明为self.embed,则模型参数中没有embed.weight这个权重
 
         enc_config = copy.deepcopy(config)
