@@ -175,7 +175,7 @@ class MultiHeadAttentionLayer(nn.Module):
         self.relative_attention_bias = None
         if has_relative_attention_bias: # 只有selfAtten时需要，且仅第0层初始化，其它层共享权重。
             self.relative_attention_bias = nn.Embedding(config.relative_attention_num_buckets, config.num_heads)
-            print(config.max_seq_length)
+            # print(config.max_seq_length)
             self.relative_position = RelativePositionalT5(
                 config.max_seq_length, config.max_seq_length, self.relative_attention_num_buckets, is_decoder=self.is_decoder
             )

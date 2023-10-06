@@ -1,5 +1,5 @@
 
-# 基础测试：mlm预测
+# 基础测试：lm预测
 
 import torch
 import torch.nn as nn
@@ -9,6 +9,7 @@ from nlpcol.models.bert import BertModel, BertOutput
 from nlpcol.tokenizers import Tokenizer, SpTokenizer
 from nlpcol.utils.snippets import model_parameter_diff, seed_everything, save_model_parameter
 from nlpcol.config import device
+from torch.nn import functional as F
 
 seed_everything(42)
 
@@ -23,7 +24,7 @@ spm_path = model_path + '/spiece.model'
 tokenizer = SpTokenizer(spm_path, token_start=None, token_end='</s>')
 
 # 需要传入参数with_mlm
-model = build_transformer_model(checkpoint_path, config_path, 't5', skip_init=True)  # 建立模型，加载权重
+model = build_transformer_model(checkpoint_path, config_path, 't5', skip_init=True, max_seq_length=512)  # 建立模型，加载权重
 model.eval()
 # model.to(device)
 
@@ -33,36 +34,60 @@ model.eval()
 # ) 
 
 # training
-input_ids, _ = tokenizer.encode("The <extra_id_0> walks in <extra_id_1> park")
-labels, _ = tokenizer.encode("<extra_id_0> cute dog <extra_id_1> the <extra_id_2>")
-input_ids = torch.tensor([input_ids])
-labels = torch.tensor([labels])
+def get_loss():
+    input_ids, _ = tokenizer.encode("The <extra_id_0> walks in <extra_id_1> park")
+    labels, _ = tokenizer.encode("<extra_id_0> cute dog <extra_id_1> the <extra_id_2>")
+    input_ids = torch.tensor([input_ids])
+    labels = torch.tensor([labels])
 
-print(input_ids)
-print(labels)
+    print(input_ids)
+    print(labels)
 
-# shift_right
-decoder_input_ids = torch.zeros_like(labels)
-decoder_input_ids[..., 1:] = labels[..., :-1].clone() # 向右偏移一位
-decoder_input_ids[..., 0] = 0
-print(decoder_input_ids)
+    # shift_right
+    decoder_input_ids = torch.zeros_like(labels)
+    decoder_input_ids[..., 1:] = labels[..., :-1].clone() # 向右偏移一位
+    decoder_input_ids[..., 0] = 0 # 起始位置用padding代表
+    print(decoder_input_ids)
 
+    outputs = model(input_ids=input_ids, decoder_input_ids=decoder_input_ids)
 
-
-outputs = model(input_ids=input_ids, decoder_input_ids=decoder_input_ids)
-
-lm_logits = outputs.lm_logits
-loss_fn = nn.CrossEntropyLoss()
-# move labels to correct device to enable PP 计算损失时将所有张量转移到同一设备上
-labels = labels.to(lm_logits.device)
-loss = loss_fn(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
-print(loss)
-
+    lm_logits = outputs.lm_logits
+    loss_fn = nn.CrossEntropyLoss()
+    # move labels to correct device to enable PP 计算损失时将所有张量转移到同一设备上
+    labels = labels.to(lm_logits.device)
+    loss = loss_fn(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
+    print(loss)
 
 
+def generate():
+    # tokenize
+    text = u"中国的首都是 <extra_id_0>京"
+    input_ids, _ = tokenizer.encode(text)
+    tokens = tokenizer.tokenize(text)
+    print(tokens, input_ids)
 
-# encoder_last_hidden_state = outputs.encoder_last_hidden_state
-# decoder_hidden_states = outputs.decoder_hidden_states
-# print(encoder_last_hidden_state.shape)
+    # generate answer
+    input_ids = torch.tensor([input_ids])
+    decoder_input_ids = torch.tensor([[0]])
+    max_target_length = 10
+
+    for _ in range(max_target_length):
+        # greedy search
+        # TODO encoder编码结果可以复用，不用每次重新计算
+        outputs = model(input_ids=input_ids, decoder_input_ids=decoder_input_ids)
+        lm_logits = outputs.lm_logits
+        lm_logits = lm_logits[:, -1, :] # 取最后一步的预测结果
+        probs = F.softmax(lm_logits, dim=-1)
+        _, idx_next = torch.topk(probs, k=1, dim=-1)
+        decoder_input_ids = torch.cat((decoder_input_ids, idx_next), dim=-1)
+    
+    print(decoder_input_ids)
+
+    decoder_input_ids=decoder_input_ids[:,1:]
+    predict_label = [tokenizer.decode(i) for i in decoder_input_ids]
+    print(predict_label)
+    # ['<extra_id_0>北京,简称 <extra_id_1>。']
 
 
+# get_loss()
+generate()
