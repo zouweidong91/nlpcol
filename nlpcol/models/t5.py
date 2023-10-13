@@ -37,11 +37,12 @@ from .base import BaseModel
 # 原来在T5.1.0中，Encoder和Decoder的Embedding层、Decoder最后预测概率分布的Softmax层都是共享同一个Embedding矩阵的，
 # 现在T5.1.1只让Encoder和Decoder的Embedding层共享，而Decoder最后预测概率分布的Softmax层则用了一个独立的Embedding矩阵，
 # 当然这会让参数量大大增加，但Google的结论说这样做效果会更好
+# t5不使用bias，并且使用rmsnorm
 
 
 # 实现原始mt5  t5没有中文预训练权重。用Mt5实现 T5.1.1
 
-# TODO 配置映射
+# TODO 配置映射 合并generation_config配置
 class Config:
     # 以下参数来自mt5 base config.json文件
     # 显式声明，支持下文自动补全
@@ -68,8 +69,9 @@ class Config:
         self.tokenizer_class: str = kwargs.get('tokenizer_class')
         self.use_cache: bool = kwargs.get('use_cache')
         self.vocab_size: int = kwargs.get('vocab_size')
-        self.is_decoder: bool = False  # 是否属于decoder
+        self.is_decoder: bool = False  # 是否属于decoder模块
         self.max_seq_length:int = kwargs.get('max_seq_length', 512)  # 需要大于max(tar_len, src_len)， 相对位置编码用
+        self.bos_token_id: int = kwargs.get('bos_token_id', 0) # bos_token_id 默认为 pad_token_id
 
 """
 {
@@ -180,9 +182,9 @@ class MultiHeadAttentionLayer(nn.Module):
                 config.max_seq_length, config.max_seq_length, self.relative_attention_num_buckets, is_decoder=self.is_decoder
             )
 
-    def mask(self, inputs:Tensor, key_mask:Tensor):
+    def mask(self, scores:Tensor, key_mask:Tensor):
         """其他Module继承支持重写mask函数
-        inputs: [batch_size, num_heads, seq_len, seq_len]
+        scores: [batch_size, num_heads, seq_len, seq_len]
         key_mask: [batch_size, to_seq_length]
         """
         if key_mask is not None:
@@ -196,9 +198,9 @@ class MultiHeadAttentionLayer(nn.Module):
             key_mask = key_mask.unsqueeze(1).unsqueeze(2)
         else:
             # dec_self_att 下三角矩阵
-            seq_len = inputs.shape[-1]
+            seq_len = scores.shape[-1]
             key_mask = torch.tril(
-                torch.ones(seq_len, seq_len, dtype=torch.long, device=inputs.device), diagonal=0
+                torch.ones(seq_len, seq_len, dtype=torch.long, device=scores.device), diagonal=0
             )
             key_mask = key_mask.unsqueeze(0).unsqueeze(1)
 
@@ -333,6 +335,7 @@ class T5Layer(nn.Module):
 class T5StackOutput:
     last_hidden_state: torch.FloatTensor = None
     hidden_states: Optional[List[torch.FloatTensor]] = None
+    attention_mask: Optional[torch.LongTensor] = None # 推理时还需要用到
 
 
 class T5Stack(nn.Module):
@@ -379,7 +382,8 @@ class T5Stack(nn.Module):
 
         return T5StackOutput(
             last_hidden_state = hidden_states,
-            hidden_states = all_hidden_states
+            hidden_states = all_hidden_states,
+            attention_mask = attention_mask
         )
 
 
@@ -388,6 +392,7 @@ class Seq2SeqLMOutput:
     lm_logits: torch.FloatTensor = None
     encoder_last_hidden_state: torch.FloatTensor = None
     decoder_last_hidden_state: torch.FloatTensor= None
+    encoder_attention_mask: Optional[torch.LongTensor] = None
     encoder_hidden_states: Optional[List[torch.FloatTensor]] = None
     decoder_hidden_states: Optional[List[torch.FloatTensor]] = None
 
@@ -412,16 +417,25 @@ class T5Model(BaseModel):
 
     def forward(
         self,
-        input_ids:torch.LongTensor,
-        decoder_input_ids:torch.LongTensor,
-        attention_mask:torch.FloatTensor=None,
-        decoder_attention_mask:torch.FloatTensor=None,
+        input_ids:torch.LongTensor=None,
+        decoder_input_ids:torch.LongTensor=None,
+        attention_mask:torch.FloatTensor=None, # encoder端的selfAtten以及decoder端的crossAtten
+        decoder_attention_mask:torch.FloatTensor=None, # decoder端的selfAtten
+        encoder_outputs=None
     ):
-        if not attention_mask: # [batch_size, to_seq_length]
+        # encoder
+        if attention_mask is None: # [batch_size, to_seq_length]
             attention_mask = (input_ids != self.config.pad_token_id).long()
         
-        enc_output:T5StackOutput = self.encoder(input_ids, attention_mask)
+        if encoder_outputs is None: # 训练或者第一次推理时才执行
+            enc_output:T5StackOutput = self.encoder(input_ids, attention_mask)
+        else:
+            enc_output = T5StackOutput(
+                last_hidden_state=encoder_outputs, 
+                attention_mask=attention_mask
+            )
 
+        # decoder
         dec_output:T5StackOutput = self.decoder(
             input_ids = decoder_input_ids, 
             attention_mask = decoder_attention_mask,
@@ -436,6 +450,7 @@ class T5Model(BaseModel):
             lm_logits = lm_logits,
             encoder_last_hidden_state = enc_output.last_hidden_state,
             decoder_last_hidden_state = dec_output.last_hidden_state,
+            encoder_attention_mask = enc_output.attention_mask,
             encoder_hidden_states = enc_output.hidden_states,
             decoder_hidden_states = dec_output.hidden_states,
         )

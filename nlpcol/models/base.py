@@ -5,8 +5,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Size, Tensor
 from nlpcol.layers.layer import LayerNorm
+from nlpcol.generation import GenerationMixin
 
-class BaseModel(nn.Module):
+class BaseModel(nn.Module, GenerationMixin):
     def __init__(self, **kwargs):
         super().__init__()
         self.skip_init = kwargs.get('skip_init', False)

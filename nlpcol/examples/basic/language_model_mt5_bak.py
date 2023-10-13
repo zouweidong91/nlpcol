@@ -64,26 +64,11 @@ def generate():
     text = u"中国的首都是 <extra_id_0>京"
     input_ids, _ = tokenizer.encode(text)
     tokens = tokenizer.tokenize(text)
-    print(tokens, input_ids)
+    print(tokens, input_ids, _)
 
-    # generate answer
     input_ids = torch.tensor([input_ids])
-    decoder_input_ids = torch.tensor([[0]])
-    max_target_length = 10
-
-    for _ in range(max_target_length):
-        # greedy search
-        # TODO encoder编码结果可以复用，不用每次重新计算
-        outputs = model(input_ids=input_ids, decoder_input_ids=decoder_input_ids)
-        lm_logits = outputs.lm_logits
-        lm_logits = lm_logits[:, -1, :] # 取最后一步的预测结果
-        probs = F.softmax(lm_logits, dim=-1)
-        _, idx_next = torch.topk(probs, k=1, dim=-1)
-        decoder_input_ids = torch.cat((decoder_input_ids, idx_next), dim=-1)
-    
-    print(decoder_input_ids)
-
-    decoder_input_ids=decoder_input_ids[:,1:]
+    decoder_input_ids = model.greedy_search(input_ids)
+    decoder_input_ids=decoder_input_ids[:,1:] # 去掉bos
     predict_label = [tokenizer.decode(i) for i in decoder_input_ids]
     print(predict_label)
     # ['<extra_id_0>北京,简称 <extra_id_1>。']
@@ -91,3 +76,8 @@ def generate():
 
 # get_loss()
 generate()
+
+
+
+
+
