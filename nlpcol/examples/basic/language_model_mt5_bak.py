@@ -66,8 +66,9 @@ def generate():
     tokens = tokenizer.tokenize(text)
     print(tokens, input_ids, _)
 
-    input_ids = torch.tensor([input_ids])
-    decoder_input_ids = model.greedy_search(input_ids)
+    input_ids = torch.tensor([input_ids, input_ids])
+    # decoder_input_ids = model.generate(input_ids, mode='do_sample', top_k=20, top_p=0.9, temperature=0.9)
+    decoder_input_ids = model.generate(input_ids, mode='beam_search', num_beams=4)
     decoder_input_ids=decoder_input_ids[:,1:] # 去掉bos
     predict_label = [tokenizer.decode(i) for i in decoder_input_ids]
     print(predict_label)

@@ -50,10 +50,14 @@ def generate():
     encode_dict = tokenizer(text, max_length=64, padding='max_length',truncation=True)
     tokens = tokenizer.tokenize(text)
     print(tokens)
-    inputs = {"input_ids": torch.tensor([encode_dict['input_ids']]).long()}
+
+    encode_dict2 = tokenizer('广东的省会是 <extra_id_0>', max_length=64, padding='max_length',truncation=True)
+    encode_dict3 = tokenizer('广西省的首府是 <extra_id_0>', max_length=64, padding='max_length',truncation=True)
+    inputs = {"input_ids": torch.tensor([encode_dict['input_ids'], encode_dict['input_ids']]).long()}
 
     # generate answer
-    logits = model.generate(input_ids = inputs['input_ids'],max_length=100, num_beams=1)
+    logits = model.generate(input_ids = inputs['input_ids'], max_length=512, 
+            num_beams=4,top_k=20, top_p=0.9, temperature=0.9)
     logits=logits[:,1:]
     predict_label = [tokenizer.decode(i,skip_special_tokens=True) for i in logits]
     print(predict_label)
