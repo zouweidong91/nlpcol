@@ -37,8 +37,10 @@ class GenerationMixin:
 
         for step in range(self.config.max_seq_length):
             # 获取dec端的输出
+            input_ids = self.prepare_inputs_for_generation(decoder_input_ids)
+
             outputs = self(
-                decoder_input_ids=decoder_input_ids,
+                decoder_input_ids=input_ids,
                 encoder_outputs=enc_output.last_hidden_state,
                 attention_mask=enc_output.attention_mask
             )
@@ -66,7 +68,7 @@ class GenerationMixin:
 
     def prepare_inputs_for_generation(self, input_ids: Tensor) -> Tensor:
         """用kv_cache时，只需要取当前时刻的token_id即可"""
-        input_ids = input_ids[:, -1:]
+        return input_ids[:, -1:]
 
 
     def greedy_search(self, scores: Tensor) -> Tensor:
@@ -140,8 +142,10 @@ class GenerationMixin:
 
         for step in range(self.config.max_seq_length):
             # 获取dec端的输出
+            input_ids = self.prepare_inputs_for_generation(decoder_input_ids)
+
             outputs = self(
-                decoder_input_ids=decoder_input_ids,
+                decoder_input_ids=input_ids,
                 encoder_outputs=enc_output.last_hidden_state,
                 attention_mask=enc_output.attention_mask
             )

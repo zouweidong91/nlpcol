@@ -36,6 +36,10 @@ class LayerTest(unittest.TestCase):
         print(o.shape)
 
 
+    def test_Attention(self):
+        """自注意力"""
+
+
     def test_attentionMask(self):
         """GlobalPointer attentionMask测试"""
         torch.manual_seed(42)

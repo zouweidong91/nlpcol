@@ -57,7 +57,7 @@ def generate():
 
     # generate answer
     logits = model.generate(input_ids = inputs['input_ids'], max_length=512, 
-            num_beams=4,top_k=20, top_p=0.9, temperature=0.9)
+            num_beams=1,top_k=20, top_p=0.9, temperature=0.9)
     logits=logits[:,1:]
     predict_label = [tokenizer.decode(i,skip_special_tokens=True) for i in logits]
     print(predict_label)

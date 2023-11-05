@@ -160,11 +160,19 @@ class FFN(nn.Module):
 
 
 class MultiHeadAttentionLayer(nn.Module):
-    def __init__(self, config: Config, has_relative_attention_bias=False, is_decoder=False):
+    def __init__(self, config: Config, has_relative_attention_bias=False, is_self_atten=True):
+        """_summary_
+
+        Args:
+            config (Config): _description_
+            has_relative_attention_bias (bool, optional): 是否有相对位置编码. Defaults to False.
+            is_self_atten (bool, optional): selfAtten or crossAtten. Defaults to True.
+        """
         super().__init__()
 
         self.relative_attention_num_buckets = config.relative_attention_num_buckets
-        self.is_decoder = is_decoder
+        self.is_decoder = config.is_decoder
+        self.is_self_atten = is_self_atten
         self.all_head_size = config.num_heads * config.d_kv
         self.num_heads = config.num_heads
         self.head_size = config.d_kv
@@ -181,10 +189,14 @@ class MultiHeadAttentionLayer(nn.Module):
             self.relative_position = RelativePositionalT5(
                 config.max_seq_length, config.max_seq_length, self.relative_attention_num_buckets, is_decoder=self.is_decoder
             )
+        
+        self.k_cache = None
+        self.v_cache = None
+
 
     def mask(self, scores:Tensor, key_mask:Tensor):
         """其他Module继承支持重写mask函数
-        scores: [batch_size, num_heads, seq_len, seq_len]
+        scores: [batch_size, num_heads, from_seq_len, to_seq_len]
         key_mask: [batch_size, to_seq_length]
         """
         if key_mask is not None:
@@ -195,17 +207,30 @@ class MultiHeadAttentionLayer(nn.Module):
             # don't actually care if we attend *from* padding tokens (only *to* padding)
             # tokens so we create a tensor of all ones.
             # enc_self_att, dec_cross_att
-            key_mask = key_mask.unsqueeze(1).unsqueeze(2)
+            key_mask = key_mask.unsqueeze(1).unsqueeze(2)  # key_mask[:, None, None, :]
         else:
             # dec_self_att 下三角矩阵
-            seq_len = scores.shape[-1]
+            qlen, klen = scores.shape[2:] # 推理阶段qlen==1
             key_mask = torch.tril(
-                torch.ones(seq_len, seq_len, dtype=torch.long, device=scores.device), diagonal=0
+                torch.ones(klen, klen, dtype=torch.long, device=scores.device), diagonal=0
             )
+            # (batch_size, n_heads, klen, klen)
             key_mask = key_mask.unsqueeze(0).unsqueeze(1)
+            key_mask = key_mask[:, :, -qlen:, :]
 
         key_mask = (1.0 - key_mask) * - 10000.0 # 传入的mask的非padding部分为1, padding部分为0
         return key_mask
+
+    def compute_bias(self, qlen, klen):
+        """计算偏置 selfAtten 处添加偏置"""
+        relative_position = self.relative_position(klen, klen)
+        bias:Tensor = self.relative_attention_bias(relative_position)  # shape (klen, klen, num_heads)
+        bias = bias.permute([2, 0, 1]).unsqueeze(0)  #  (1, num_heads, klen, klen)
+
+        if self.k_cache is not None: # 推理阶段decoder,qlen=1, 只选取query最后一个position bias。 注意，crossAtten没有位置bias
+            bias = bias[:, :, -qlen:, :]
+
+        return bias
 
     def applay_att_score_bias(self, attention_scores:Tensor) -> Tensor:
         """
@@ -214,28 +239,60 @@ class MultiHeadAttentionLayer(nn.Module):
         if self.relative_attention_bias is None:  # crossAtten不需要位置编码
             return attention_scores
 
-        qlen, klen = attention_scores.shape[2:]
-        relative_position = self.relative_position(qlen, klen)
-        values:Tensor = self.relative_attention_bias(relative_position)  # shape (qlen, klen, num_heads)
-        values = values.permute([2, 0, 1]).unsqueeze(0)  #  (1, num_heads, qlen, klen)
-        return attention_scores + values
+        qlen, klen = attention_scores.shape[2:] # 推理时decoder qlen = 1
+        bias = self.compute_bias(qlen, klen)
+        return attention_scores + bias
 
-    def transpose_for_scores(self, x: Tensor) -> Tensor:
+    def shape(self, x: Tensor) -> Tensor:
+        # x: (batch_size, seq_length, hidden_size)
         new_x_shape = x.size()[:-1] + (self.num_heads, self.head_size)   
         x = x.view(new_x_shape)  
         # torch.view 只能用于连续的张量  torch.reshape 可以用于不连续的张量  x_t.is_contiguous()  x:  B*L*num_head*head_size
         # view 的过程可以简单地理解为先将张量进行拉平（变成一维），然后再按照指定的新形状进行重塑
-        return x.permute(0, 2, 1, 3)  # x:  B*num_head*L*head_size
+        return x.permute(0, 2, 1, 3)  # x:  (batch_size, n_heads, seq_length, head_size)
+
+    def project(self, hidden_states: Tensor, proj_layer, cache: Tensor):
+        """
+        hidden_states: [batch_size, seq_length, hidden_size]
+        推理阶段，使用kv_cache
+        encoder:
+            无需使用kv_cache
+        decoder-selfAtten:
+            推理时seq_length=1
+        decoder-crossAtten:
+            推理时query_seq_length=1
+            key, value的seq_length为src_len
+            
+        """
+        if cache is None: # 初始化
+            hidden_states = cache = proj_layer(hidden_states)
+
+            if self.training or not self.is_decoder: # 训练及encoder端不使用缓存
+                return hidden_states, None
+            else:
+                return hidden_states, cache
+
+        else:
+            if self.is_self_atten:
+                hidden_states = proj_layer(hidden_states)  # [batch_size, 1, hidden_size]
+                hidden_states = cache = torch.cat([cache, hidden_states], dim=1)
+                return hidden_states, cache
+            else:
+                return cache, cache
+
 
     def forward(self, query, key, value, key_mask):
         # 线性变换
         query_layer = self.q(query)
-        key_layer = self.k(key)
-        value_layer = self.v(value)
+        # key_layer = self.k(key)
+        # value_layer = self.v(value)
+        key_layer, self.k_cache = self.project(key, self.k, self.k_cache)
+        value_layer, self.v_cache = self.project(value, self.v, self.v_cache)
+
         # 形状变换
-        query_layer = self.transpose_for_scores(query_layer)
-        key_layer = self.transpose_for_scores(key_layer)
-        value_layer = self.transpose_for_scores(value_layer)
+        query_layer = self.shape(query_layer)
+        key_layer = self.shape(key_layer)
+        value_layer = self.shape(value_layer)
         # attention
         # transpose和permute的区别：如果你只需要交换两个维度，transpose 是一个简单的选择。如果你需要进行更复杂的维度重排，你应该使用 permute。
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))  # B*num_head*L*L
@@ -292,12 +349,12 @@ class T5Layer(nn.Module):
         super().__init__()
         self.is_decoder = config.is_decoder
         self.layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
-        self.selfAttention = MultiHeadAttentionLayer(config, has_relative_attention_bias=has_relative_attention_bias)
+        self.selfAttention = MultiHeadAttentionLayer(config, has_relative_attention_bias=has_relative_attention_bias, is_self_atten=True)
         self.selfAttentionOutput = AttentionOutput(config)
 
         if self.is_decoder:
             self.layer_norm2 = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
-            self.crossAttention = MultiHeadAttentionLayer(config, is_decoder=True)
+            self.crossAttention = MultiHeadAttentionLayer(config, is_self_atten=False)
             self.crossAttentionOutput = AttentionOutput(config)
 
         self.ffn = FFN(config)

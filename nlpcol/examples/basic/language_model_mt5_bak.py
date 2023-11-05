@@ -68,14 +68,15 @@ def generate():
 
     input_ids = torch.tensor([input_ids, input_ids])
     # decoder_input_ids = model.generate(input_ids, mode='do_sample', top_k=20, top_p=0.9, temperature=0.9)
-    decoder_input_ids = model.generate(input_ids, mode='beam_search', num_beams=4)
+    decoder_input_ids = model.generate(input_ids, mode='greedy_search')
+    # decoder_input_ids = model.generate(input_ids, mode='beam_search', num_beams=4)
     decoder_input_ids=decoder_input_ids[:,1:] # 去掉bos
     predict_label = [tokenizer.decode(i) for i in decoder_input_ids]
     print(predict_label)
     # ['<extra_id_0>北京,简称 <extra_id_1>。']
 
 
-# get_loss()
+# get_loss()  # tensor(4.2471, grad_fn=<NllLossBackward0>)
 generate()
 
 

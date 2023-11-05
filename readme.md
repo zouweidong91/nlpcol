@@ -7,3 +7,4 @@
 
 # ref: 
 https://github.com/labmlai/annotated_deep_learning_paper_implementations/tree/master
+https://github.com/NVIDIA/Megatron-LM/tree/main
