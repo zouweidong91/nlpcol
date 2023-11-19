@@ -2,13 +2,15 @@
 import json
 import os
 import random
+from typing import List, Union
 
 import numpy as np
+import sentencepiece as spm
 import torch
 from nlpcol.utils._file import FileTool
+from torch import Size, Tensor
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset, IterableDataset
-import sentencepiece as spm
 
 
 def seed_everything(seed:int=42):
@@ -51,13 +53,18 @@ def torch_gc() -> None:
 class ListDataset(Dataset):
     """数据是List格式Dataset
     """
-    def __init__(self, file_path:str):
+    def __init__(self, file_path:str=None, data_list:list=None):
         """_summary_
 
         Args:
             file_path (str): 待读取文件路径
         """
-        self.data = self.load_data(file_path)
+        if file_path:
+            self.data = self.load_data(file_path)
+        elif data_list:
+            self.data = data_list
+        else:
+            raise ValueError("the input args error")
 
     @staticmethod
     def load_data(file_path) -> list:
@@ -208,3 +215,40 @@ def expoer_vocab_from_spm(spm_path:str, vocab_path:str):
             f.write(
                 f"{token}\t{str(i)}\n"
             )
+
+
+def get_pool_emb(outputs, attention_mask:Tensor, pool_strategy='cls'):
+    """获取句向量
+    outputs: Model的输出 TODO 类型注释
+    attention_mask: [btz, seq_len]
+    return: [btz, hidden_size]
+    """
+    last_hidden = outputs.last_hidden_state
+    pooled_output = outputs.pooled_output
+    hidden_states: List[Tensor] = outputs.hidden_states
+
+    if pool_strategy == 'pooler':
+        return pooled_output
+
+    if pool_strategy in "cls":
+        return last_hidden[:, 0]
+
+    elif pool_strategy == "avg":
+        return ((last_hidden * attention_mask.unsqueeze(-1)).sum(1) / attention_mask.sum(-1).unsqueeze(-1))
+
+    elif pool_strategy == "avg_first_last":
+        first_hidden = hidden_states[1]
+        last_hidden = hidden_states[-1]
+        pooled_result = ((first_hidden + last_hidden) / 2.0 * attention_mask.unsqueeze(-1)).sum(1) / attention_mask.sum(-1).unsqueeze(-1)
+        return pooled_result
+
+    elif pool_strategy == "avg_top2":
+        second_last_hidden = hidden_states[-2]
+        last_hidden = hidden_states[-1]
+        pooled_result = ((last_hidden + second_last_hidden) / 2.0 * attention_mask.unsqueeze(-1)).sum(1) / attention_mask.sum(-1).unsqueeze(-1)
+        return pooled_result
+
+    else:
+        raise NotImplementedError
+
+
