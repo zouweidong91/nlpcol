@@ -42,7 +42,8 @@ class GenerationMixin:
             outputs = self(
                 decoder_input_ids=input_ids,
                 encoder_outputs=enc_output.last_hidden_state,
-                attention_mask=enc_output.attention_mask
+                attention_mask=enc_output.attention_mask,
+                start_pos = step
             )
             next_token_logits = outputs.lm_logits[:, -1, :] # 去最后一步的预测结果 (batch_size, vocab_size)
             next_tokens = getattr(self, mode)(next_token_logits, *args, **kwargs) # (batch_size)

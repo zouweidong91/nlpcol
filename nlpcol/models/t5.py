@@ -72,6 +72,7 @@ class Config:
         self.is_decoder: bool = False  # 是否属于decoder模块
         self.max_seq_length:int = kwargs.get('max_seq_length', 512)  # 需要大于max(tar_len, src_len)， 相对位置编码用
         self.bos_token_id: int = kwargs.get('bos_token_id', 0) # bos_token_id 默认为 pad_token_id
+        self.max_batch_size:int = kwargs.get('max_batch_size', 16)  # 推理过程中batch_size不能大于此值， kv_cache用
 
 """
 {
@@ -190,8 +191,13 @@ class MultiHeadAttentionLayer(nn.Module):
                 config.max_seq_length, config.max_seq_length, self.relative_attention_num_buckets, is_decoder=self.is_decoder
             )
         
-        self.k_cache = None
-        self.v_cache = None
+        # kv_cache
+        self.cache_k = torch.zeros(
+            config.max_batch_size, config.max_seq_length, self.all_head_size, 
+        )
+        self.cache_v = torch.zeros(
+            config.max_batch_size, config.max_seq_length, self.all_head_size, 
+        )
 
 
     def mask(self, scores:Tensor, key_mask:Tensor):
@@ -227,8 +233,10 @@ class MultiHeadAttentionLayer(nn.Module):
         bias:Tensor = self.relative_attention_bias(relative_position)  # shape (klen, klen, num_heads)
         bias = bias.permute([2, 0, 1]).unsqueeze(0)  #  (1, num_heads, klen, klen)
 
-        if self.k_cache is not None: # 推理阶段decoder,qlen=1, 只选取query最后一个position bias。 注意，crossAtten没有位置bias
-            bias = bias[:, :, -qlen:, :]
+        # if self.training or not self.is_decoder:
+        #     pass
+        # if self.k_cache is not None: # 推理阶段decoder,qlen=1, 只选取query最后一个position bias。 注意，crossAtten没有位置bias
+        bias = bias[:, :, -qlen:, :]
 
         return bias
 
@@ -251,48 +259,45 @@ class MultiHeadAttentionLayer(nn.Module):
         # view 的过程可以简单地理解为先将张量进行拉平（变成一维），然后再按照指定的新形状进行重塑
         return x.permute(0, 2, 1, 3)  # x:  (batch_size, n_heads, seq_length, head_size)
 
-    def project(self, hidden_states: Tensor, proj_layer, cache: Tensor):
-        """
-        hidden_states: [batch_size, seq_length, hidden_size]
-        推理阶段，使用kv_cache
-        encoder:
-            无需使用kv_cache
-        decoder-selfAtten:
-            推理时seq_length=1
-        decoder-crossAtten:
-            推理时query_seq_length=1
-            key, value的seq_length为src_len
-            
-        """
-        if cache is None: # 初始化
-            hidden_states = cache = proj_layer(hidden_states)
+    def project(self, query:Tensor, key:Tensor, value:Tensor, start_pos:int):
+        # 推理阶段，使用kv_cache
+        # train以及encoder端:
+        #     无需使用kv_cache
+        # decoder-selfAtten:
+        #     推理时seq_length=1
+        # decoder-crossAtten:
+        #     推理时query_seq_length=1
+        #     key, value的seq_length为src_len
+        klen = vlen = key.shape[1]
+        bsz, seqlen, _ = query.shape
+        # selfAtten
+        if self.is_self_atten:
+            self.cache_k[:bsz, start_pos : start_pos + seqlen] = self.k(key)
+            self.cache_v[:bsz, start_pos : start_pos + seqlen] = self.v(value)
+            keys = self.cache_k[:bsz, : start_pos + seqlen]
+            values = self.cache_v[:bsz, : start_pos + seqlen]
 
-            if self.training or not self.is_decoder: # 训练及encoder端不使用缓存
-                return hidden_states, None
-            else:
-                return hidden_states, cache
-
+        # crossAtten
         else:
-            if self.is_self_atten:
-                hidden_states = proj_layer(hidden_states)  # [batch_size, 1, hidden_size]
-                hidden_states = cache = torch.cat([cache, hidden_states], dim=1)
-                return hidden_states, cache
-            else:
-                return cache, cache
+            if start_pos == 0:
+                self.cache_k[:bsz, :klen] = self.k(key)
+                self.cache_v[:bsz, :vlen] = self.v(value)
 
+            keys = self.cache_k[:bsz, :klen]
+            values = self.cache_v[:bsz, :vlen]
 
-    def forward(self, query, key, value, key_mask):
-        # 线性变换
-        query_layer = self.q(query)
-        # key_layer = self.k(key)
-        # value_layer = self.v(value)
-        key_layer, self.k_cache = self.project(key, self.k, self.k_cache)
-        value_layer, self.v_cache = self.project(value, self.v, self.v_cache)
+        return keys, values
 
+    def forward(self, query, key, value, key_mask:Tensor, start_pos:int):
+        # query, key, value: [bsz, seqlen, head_size] 
+        # start_pos: Starting position for caching.
+        querys = self.q(query)
+        keys, values = self.project(query, key, value, start_pos)
+    
         # 形状变换
-        query_layer = self.shape(query_layer)
-        key_layer = self.shape(key_layer)
-        value_layer = self.shape(value_layer)
+        query_layer = self.shape(querys)
+        key_layer = self.shape(keys)
+        value_layer = self.shape(values)
         # attention
         # transpose和permute的区别：如果你只需要交换两个维度，transpose 是一个简单的选择。如果你需要进行更复杂的维度重排，你应该使用 permute。
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))  # B*num_head*L*L
@@ -365,13 +370,14 @@ class T5Layer(nn.Module):
         hidden_states:Tensor, 
         attention_mask:Tensor=None, 
         encoder_hidden_states:Tensor=None, 
-        encoder_attention_mask:Tensor=None
+        encoder_attention_mask:Tensor=None,
+        start_pos:int=0
     ) -> Tensor:
 
         # self attention
         normed_hidden_states = self.layer_norm(hidden_states)
         context_layer = self.selfAttention(
-            normed_hidden_states, normed_hidden_states, normed_hidden_states, attention_mask
+            normed_hidden_states, normed_hidden_states, normed_hidden_states, attention_mask, start_pos
         )
         hidden_states = self.selfAttentionOutput(context_layer, hidden_states) # add为标准化之前的hidden_states
 
@@ -380,7 +386,7 @@ class T5Layer(nn.Module):
         if self.is_decoder:
             normed_hidden_states = self.layer_norm2(hidden_states)
             context_layer = self.crossAttention(
-                normed_hidden_states, encoder_hidden_states, encoder_hidden_states, encoder_attention_mask
+                normed_hidden_states, encoder_hidden_states, encoder_hidden_states, encoder_attention_mask, start_pos
             )
             hidden_states = self.crossAttentionOutput(context_layer, hidden_states)
 
@@ -418,7 +424,8 @@ class T5Stack(nn.Module):
         input_ids:Tensor, 
         attention_mask:Tensor=None,
         encoder_hidden_states:Tensor=None, 
-        encoder_attention_mask:Tensor=None
+        encoder_attention_mask:Tensor=None,
+        start_pos:int=0
     ) -> Tensor:
         hidden_states = self.embed(input_ids)
 
@@ -430,7 +437,8 @@ class T5Stack(nn.Module):
                 hidden_states, 
                 attention_mask,
                 encoder_hidden_states,
-                encoder_attention_mask
+                encoder_attention_mask,
+                start_pos = start_pos
             )
 
         hidden_states = self.final_layer_norm(hidden_states)
@@ -478,14 +486,15 @@ class T5Model(BaseModel):
         decoder_input_ids:torch.LongTensor=None,
         attention_mask:torch.FloatTensor=None, # encoder端的selfAtten以及decoder端的crossAtten
         decoder_attention_mask:torch.FloatTensor=None, # decoder端的selfAtten
-        encoder_outputs=None
+        encoder_outputs=None,
+        start_pos:int=0 # 训练状态下 start_pos=0
     ):
         # encoder
         if attention_mask is None: # [batch_size, to_seq_length]
             attention_mask = (input_ids != self.config.pad_token_id).long()
         
         if encoder_outputs is None: # 训练或者第一次推理时才执行
-            enc_output:T5StackOutput = self.encoder(input_ids, attention_mask)
+            enc_output:T5StackOutput = self.encoder(input_ids, attention_mask, start_pos = 0)
         else:
             enc_output = T5StackOutput(
                 last_hidden_state=encoder_outputs, 
@@ -497,7 +506,8 @@ class T5Model(BaseModel):
             input_ids = decoder_input_ids, 
             attention_mask = decoder_attention_mask,
             encoder_hidden_states = enc_output.last_hidden_state,
-            encoder_attention_mask = attention_mask
+            encoder_attention_mask = attention_mask,
+            start_pos = start_pos
         )
 
         lm_logits = self.lm_head(dec_output.last_hidden_state)

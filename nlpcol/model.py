@@ -14,15 +14,17 @@ def load_config(config_path) -> dict:
         return config
 
 
-def build_transformer_model(checkpoint_path:str=None, config_path:str=None, model='bert', **kwargs) -> BaseModel:
+def build_transformer_model(checkpoint_path:str=None, config_path:str=None, model='bert', extra_config:dict={}, **kwargs) -> BaseModel:
     """_summary_
 
     Args:
         checkpoint_path (str): _description_
         config_path (str): _description_
         model (str, optional): _description_. Defaults to 'bert'.
+        extra_config (dict): 如需修改config_path中参数如，dropout_rate，在此传入即可
     """
     config = load_config(config_path)
+    config.update(extra_config)
 
     models = {
         "bert": BertModel,

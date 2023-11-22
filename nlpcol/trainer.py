@@ -50,7 +50,7 @@ class Trainer:
         """
         self.global_step = self.epoch * self.steps_per_epoch + self.local_step
 
-    def get_dataloader(self, dataset, shuffle:bool=False):
+    def get_dataloader(self, dataset:Dataset, shuffle:bool=False):
         dataloader = DataLoader(dataset, batch_size=self.config.batch_size, \
             shuffle=shuffle, collate_fn=self.collate_fn)
         return dataloader
@@ -111,7 +111,7 @@ class Trainer:
         self.callbacks.on_epoch_end(self.global_step, self.epoch+1)
 
 
-    def train(self, train_dataset, callbacks: List[Callback] = None):
+    def train(self, train_dataset:Dataset, callbacks: List[Callback] = None):
         """执行训练主函数
             train_dataset (Dataset): 训练数据.
             callbacks (List[Callback], optional): 回调类. Defaults to None.

@@ -24,7 +24,7 @@ spm_path = model_path + '/spiece.model'
 tokenizer = SpTokenizer(spm_path, token_start=None, token_end='</s>')
 
 # 需要传入参数with_mlm
-model = build_transformer_model(checkpoint_path, config_path, 't5', skip_init=True, max_seq_length=512)  # 建立模型，加载权重
+model = build_transformer_model(checkpoint_path, config_path, 't5', skip_init=True, max_seq_length=512)  # 建立模型，加载权重 下游任务无额外参数 暂时不需初始化
 model.eval()
 # model.to(device)
 
@@ -74,6 +74,12 @@ def generate():
     predict_label = [tokenizer.decode(i) for i in decoder_input_ids]
     print(predict_label)
     # ['<extra_id_0>北京,简称 <extra_id_1>。']
+
+    decoder_input_ids = model.generate(input_ids, mode='greedy_search')
+    # decoder_input_ids = model.generate(input_ids, mode='beam_search', num_beams=4)
+    decoder_input_ids=decoder_input_ids[:,1:] # 去掉bos
+    predict_label = [tokenizer.decode(i) for i in decoder_input_ids]
+    print(predict_label)
 
 
 # get_loss()  # tensor(4.2471, grad_fn=<NllLossBackward0>)

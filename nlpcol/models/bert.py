@@ -313,8 +313,8 @@ class BertMLM(nn.Module):
         self.LayerNorm = LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
 
         self.decoder = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-        self.bias = nn.Parameter(torch.zeros(config.vocab_size))
-        self.decoder.bias = self.bias
+        self.decoder.bias = nn.Parameter(torch.zeros(config.vocab_size))
+        # self.decoder.bias = self.bias
 
     def forward(self, hidden_states: Tensor) -> Tensor:
         """
@@ -341,7 +341,7 @@ class BertOutput:
     pooled_output: torch.FloatTensor = None
     nsp_scores: torch.FloatTensor = None
     mlm_scores: torch.FloatTensor = None
-    encoded_layers: List[torch.FloatTensor] = None # 所有encoder层的输出
+    hidden_states: List[torch.FloatTensor] = None # 所有encoder层的输出
     last_hidden_state: torch.FloatTensor = None # 最后一层encoer的输出
 
 
@@ -409,7 +409,7 @@ class BertModel(BaseModel):
             pooled_output = pooled_output,
             nsp_scores = nsp_scores,
             mlm_scores = mlm_scores,
-            encoded_layers = encoder_output.hidden_states,
+            hidden_states = encoder_output.hidden_states,
             last_hidden_state = encoder_output.last_hidden_state
         )
 
