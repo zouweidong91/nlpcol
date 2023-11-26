@@ -24,9 +24,10 @@ spm_path = model_path + '/spiece.model'
 tokenizer = SpTokenizer(spm_path, token_start=None, token_end='</s>')
 
 # 需要传入参数with_mlm
-model = build_transformer_model(checkpoint_path, config_path, 't5', skip_init=True, max_seq_length=512)  # 建立模型，加载权重 下游任务无额外参数 暂时不需初始化
+model = build_transformer_model(checkpoint_path, config_path, 't5', extra_config={"max_seq_length": 512}, skip_init=True)  # 建立模型，加载权重 下游任务无额外参数 暂时不需初始化
 model.eval()
-# model.to(device)
+model.to(device)
+
 
 # model_parameter_diff(
 #     state_dict_1=model.state_dict(), 
@@ -37,8 +38,8 @@ model.eval()
 def get_loss():
     input_ids, _ = tokenizer.encode("The <extra_id_0> walks in <extra_id_1> park")
     labels, _ = tokenizer.encode("<extra_id_0> cute dog <extra_id_1> the <extra_id_2>")
-    input_ids = torch.tensor([input_ids])
-    labels = torch.tensor([labels])
+    input_ids = torch.tensor([input_ids]).to(device)
+    labels = torch.tensor([labels]).to(device)
 
     print(input_ids)
     print(labels)
@@ -49,41 +50,37 @@ def get_loss():
     decoder_input_ids[..., 0] = 0 # 起始位置用padding代表
     print(decoder_input_ids)
 
-    outputs = model(input_ids=input_ids, decoder_input_ids=decoder_input_ids)
+    for i in range(4):
+        outputs = model(input_ids=input_ids, decoder_input_ids=decoder_input_ids)
 
-    lm_logits = outputs.lm_logits
-    loss_fn = nn.CrossEntropyLoss()
-    # move labels to correct device to enable PP 计算损失时将所有张量转移到同一设备上
-    labels = labels.to(lm_logits.device)
-    loss = loss_fn(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
-    print(loss)
-
+        lm_logits = outputs.lm_logits
+        loss_fn = nn.CrossEntropyLoss()
+        # move labels to correct device to enable PP 计算损失时将所有张量转移到同一设备上
+        labels = labels.to(lm_logits.device)
+        loss = loss_fn(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
+        print(loss)
+        loss.backward()
+    
 
 def generate():
     # tokenize
-    text = u"中国的首都是 <extra_id_0>京"
+    text = u"中国的首都是extra0京"
     input_ids, _ = tokenizer.encode(text)
     tokens = tokenizer.tokenize(text)
     print(tokens, input_ids, _)
 
     input_ids = torch.tensor([input_ids, input_ids])
-    # decoder_input_ids = model.generate(input_ids, mode='do_sample', top_k=20, top_p=0.9, temperature=0.9)
-    decoder_input_ids = model.generate(input_ids, mode='greedy_search')
-    # decoder_input_ids = model.generate(input_ids, mode='beam_search', num_beams=4)
-    decoder_input_ids=decoder_input_ids[:,1:] # 去掉bos
-    predict_label = [tokenizer.decode(i) for i in decoder_input_ids]
+    # logits = model.generate(input_ids, mode='do_sample', top_k=20, top_p=0.9, temperature=0.9)
+    logits = model.generate(input_ids, mode='greedy_search')
+    # logits = model.generate(input_ids, mode='beam_search', num_beams=4)
+    logits=logits[:,1:] # 去掉bos
+    predict_label = [tokenizer.decode(i) for i in logits]
     print(predict_label)
     # ['<extra_id_0>北京,简称 <extra_id_1>。']
 
-    decoder_input_ids = model.generate(input_ids, mode='greedy_search')
-    # decoder_input_ids = model.generate(input_ids, mode='beam_search', num_beams=4)
-    decoder_input_ids=decoder_input_ids[:,1:] # 去掉bos
-    predict_label = [tokenizer.decode(i) for i in decoder_input_ids]
-    print(predict_label)
 
-
-# get_loss()  # tensor(4.2471, grad_fn=<NllLossBackward0>)
-generate()
+get_loss()  # tensor(4.2471, grad_fn=<NllLossBackward0>)
+# generate()
 
 
 

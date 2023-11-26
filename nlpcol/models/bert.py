@@ -354,7 +354,7 @@ class BertModel(BaseModel):
         with_mlm = False,  # 是否包含mlm部分
         **kwargs
     ):
-        super().__init__(**kwargs)
+        super().__init__(config, **kwargs)
         self.config = config = Config(**config)
         self.with_pool = with_pool
         self.with_nsp = with_nsp

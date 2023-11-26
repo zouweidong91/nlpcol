@@ -40,14 +40,14 @@ class LayerNorm(nn.Module):
         """
         mean = input.mean(-1, keepdim=True)  # 最后一位计算均值
         var = (input - mean).pow(2).mean(-1, keepdim=True)  # 方差
-        o = (input - mean) / torch.sqrt(var + self.eps)
+        o = (input - mean) / torch.sqrt(var + self.eps) # 减均值除标准差
 
         return self.weight * o + self.bias
 
 
 class T5LayerNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-12):
-        """t5使用的是RMSnorm (Root Mean Square)
+        """t5使用的是RMSnorm (Root Mean Square) 均方根
         No bias and no subtraction of mean
         """
         super().__init__()

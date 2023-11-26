@@ -148,7 +148,8 @@ class GenerationMixin:
             outputs = self(
                 decoder_input_ids=input_ids,
                 encoder_outputs=enc_output.last_hidden_state,
-                attention_mask=enc_output.attention_mask
+                attention_mask=enc_output.attention_mask,
+                start_pos = step
             )
 
             next_token_logits:torch.Tensor = outputs.lm_logits[:, -1, :]

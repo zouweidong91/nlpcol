@@ -39,7 +39,7 @@ def get_device():
         gpu = ""
 
     device = torch.device(f"cuda:{gpu}") if gpu else torch.device("cpu")
-    print(f'Using {device} device')
+    print(f'Using {device}')
     return device
 
 def torch_gc() -> None:
@@ -202,7 +202,7 @@ def text_segmentate(text, maxlen, seps='\n', strips=None):
         return [text]
 
 
-def expoer_vocab_from_spm(spm_path:str, vocab_path:str):
+def export_vocab_from_spm(spm_path:str, vocab_path:str):
     """从sp_model到处词典，方便查看
     """
     sp_model = spm.SentencePieceProcessor()

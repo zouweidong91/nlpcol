@@ -17,24 +17,26 @@ pretraine_dir = '/home/dataset/pretrain_ckpt/t5/mt5-base/'
 tokenizer = AutoTokenizer.from_pretrained(pretraine_dir)
 model = AutoModelForSeq2SeqLM.from_pretrained(pretraine_dir).to(device)
 model.eval()
-
+model.to(device)
 
 
 # training
 def get_loss():
-    input_ids = tokenizer("The <extra_id_0> walks in <extra_id_1> park", return_tensors="pt").input_ids
-    labels = tokenizer("<extra_id_0> cute dog <extra_id_1> the <extra_id_2>", return_tensors="pt").input_ids
+    input_ids = tokenizer("The <extra_id_0> walks in <extra_id_1> park", return_tensors="pt").input_ids.to(device)
+    labels = tokenizer("<extra_id_0> cute dog <extra_id_1> the <extra_id_2>", return_tensors="pt").input_ids.to(device)
 
     print(input_ids)
     print(labels)
-    outputs = model(input_ids=input_ids, labels=labels)
 
-    encoder_last_hidden_state = outputs.encoder_last_hidden_state
-    decoder_hidden_states = outputs.decoder_hidden_states
+    for i in range(4):
+        outputs = model(input_ids=input_ids, labels=labels)
 
-    print(encoder_last_hidden_state.shape)
-    print(outputs.loss)
+        encoder_last_hidden_state = outputs.encoder_last_hidden_state
+        decoder_hidden_states = outputs.decoder_hidden_states
 
+        print(encoder_last_hidden_state.shape)
+        print(outputs.loss)
+        outputs.loss.backward()
 
     # tensor([[   486, 250099,  12747,    263,    281, 250098,  10676,      1]])
     # tensor([[250099,  64712,  10990, 250098,    287, 250097,      1]])
@@ -69,6 +71,6 @@ def generate():
     predict_label = [tokenizer.decode(i,skip_special_tokens=True) for i in logits]
     print(predict_label)
 
-# get_loss()
-generate()
+get_loss()
+# generate()
 

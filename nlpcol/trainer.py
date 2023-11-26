@@ -1,8 +1,9 @@
 
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional, Union
 
 import torch
 import torch.nn as nn
+from torch import Tensor
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader, Dataset
@@ -18,10 +19,11 @@ class Trainer:
         self,
         model: nn.Module, 
         config: TrainConfig,
-        loss_fn: Callable,
-        optimizer: Optimizer,
-        collate_fn: Callable,
-        lr_scheduler: LambdaLR = None
+        loss_fn: Callable = None,
+        optimizer: Optimizer = None,
+        collate_fn: Callable = None,
+        lr_scheduler: LambdaLR = None,
+        retain_graph: bool = False,
     ):
         """简单实现的通用trainer类
 
@@ -39,6 +41,7 @@ class Trainer:
         self.optimizer:Optimizer = optimizer
         self.collate_fn = collate_fn
         self.lr_scheduler = lr_scheduler
+        self.retain_graph = retain_graph # 是否保留计算图
 
         self.global_step = 0 # 当前全局step
         self.local_step = 0  # epoch内当前step
@@ -57,11 +60,26 @@ class Trainer:
     
     def args_expend(self, X):
         """model入参是否展开"""
-        if isinstance(X, torch.Tensor):
+        if isinstance(X, Tensor):
             return False
         elif type(X) in [list, tuple]:
             return True
         return False
+
+    def compute_loss(self, batch:Union[Tensor, List, Dict]):
+        """计算损失"""
+        # 模型内部计算损失 生成模型时候用
+        if self.loss_fn is None:
+            output = self.model(**batch)
+            loss = output.loss
+            print(loss)
+        
+        # 外部定义loss函数 
+        else:
+            X, y = batch
+            output = self.model(*X) if self.args_expend(X) else self.model(X)
+            loss:Tensor = self.loss_fn(output, y)
+        return loss
 
 
     def train_step(self, batch):
@@ -73,11 +91,9 @@ class Trainer:
         self.update_global_step()
         self.callbacks.on_batch_begin(self.global_step, self.local_step)
 
-        X, y = batch
-        output = self.model(*X) if self.args_expend(X) else self.model(X)
-        loss:torch.Tensor = self.loss_fn(output, y)
+        loss = self.compute_loss(batch)
+        loss.backward(retain_graph=self.retain_graph)
         self.optimizer.zero_grad()
-        loss.backward()
         self.optimizer.step()
 
         self.callbacks.on_batch_end(self.global_step, self.local_step)

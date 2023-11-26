@@ -229,7 +229,8 @@ class MultiHeadAttentionLayer(nn.Module):
 
     def compute_bias(self, qlen, klen):
         """计算偏置 selfAtten 处添加偏置"""
-        relative_position = self.relative_position(klen, klen)
+        device = self.relative_attention_bias.weight.device
+        relative_position = self.relative_position(klen, klen).to(device)
         bias:Tensor = self.relative_attention_bias(relative_position)  # shape (klen, klen, num_heads)
         bias = bias.permute([2, 0, 1]).unsqueeze(0)  #  (1, num_heads, klen, klen)
 
@@ -286,7 +287,7 @@ class MultiHeadAttentionLayer(nn.Module):
             keys = self.cache_k[:bsz, :klen]
             values = self.cache_v[:bsz, :vlen]
 
-        return keys, values
+        return keys.to(key), values.to(value)
 
     def forward(self, query, key, value, key_mask:Tensor, start_pos:int):
         # query, key, value: [bsz, seqlen, head_size] 
@@ -454,6 +455,7 @@ class T5Stack(nn.Module):
 
 @dataclass
 class Seq2SeqLMOutput:
+    loss: torch.FloatTensor = None
     lm_logits: torch.FloatTensor = None
     encoder_last_hidden_state: torch.FloatTensor = None
     decoder_last_hidden_state: torch.FloatTensor= None
@@ -464,8 +466,8 @@ class Seq2SeqLMOutput:
 
 class T5Model(BaseModel):
     def __init__(self, config: Config, **kwargs):
-        super().__init__(**kwargs)
-        self.config = config = Config(**config, **kwargs)
+        super().__init__(config, **kwargs)
+        self.config = config = Config(**config)
         embed = T5Embeddings(config) # 在enc和dec之间共享embedding, 不声明为self.embed,则模型参数中没有embed.weight这个权重
 
         enc_config = copy.deepcopy(config)
@@ -487,6 +489,7 @@ class T5Model(BaseModel):
         attention_mask:torch.FloatTensor=None, # encoder端的selfAtten以及decoder端的crossAtten
         decoder_attention_mask:torch.FloatTensor=None, # decoder端的selfAtten
         encoder_outputs=None,
+        labels:torch.LongTensor=None,
         start_pos:int=0 # 训练状态下 start_pos=0
     ):
         # encoder
@@ -501,6 +504,15 @@ class T5Model(BaseModel):
                 attention_mask=attention_mask
             )
 
+        # label shift right  label padding位为-100, decoder_input_ids需要将-100替换为0
+        if labels is not None and decoder_input_ids is None:
+            decoder_input_ids = torch.zeros_like(labels)
+            decoder_input_ids[..., 1:] = labels[..., :-1].clone() # 向右偏移一位
+            decoder_input_ids[..., 0] = self.config.decoder_start_token_id # 起始位置用padding代表
+            pad_token_id = self.config.pad_token_id
+            # replace possible -100 values in labels by `pad_token_id`
+            decoder_input_ids.masked_fill_(decoder_input_ids==-100, pad_token_id)
+            
         # decoder
         dec_output:T5StackOutput = self.decoder(
             input_ids = decoder_input_ids, 
@@ -510,10 +522,17 @@ class T5Model(BaseModel):
             start_pos = start_pos
         )
 
-        lm_logits = self.lm_head(dec_output.last_hidden_state)
+        lm_logits: Tensor = self.lm_head(dec_output.last_hidden_state)
 
+        # 计算损失
+        loss = None
+        if labels is not None:
+            loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
+            labels = labels.to(lm_logits.device)
+            loss = loss_fn(lm_logits.view(-1, self.config.vocab_size), labels.view(-1))
         
         return Seq2SeqLMOutput(
+            loss = loss,
             lm_logits = lm_logits,
             encoder_last_hidden_state = enc_output.last_hidden_state,
             decoder_last_hidden_state = dec_output.last_hidden_state,
