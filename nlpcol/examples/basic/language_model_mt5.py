@@ -28,15 +28,12 @@ def get_loss():
     print(input_ids)
     print(labels)
 
-    for i in range(4):
-        outputs = model(input_ids=input_ids, labels=labels)
+    outputs = model(input_ids=input_ids, labels=labels)
+    encoder_last_hidden_state = outputs.encoder_last_hidden_state
 
-        encoder_last_hidden_state = outputs.encoder_last_hidden_state
-        decoder_hidden_states = outputs.decoder_hidden_states
-
-        print(encoder_last_hidden_state.shape)
-        print(outputs.loss)
-        outputs.loss.backward()
+    print(encoder_last_hidden_state.shape)
+    print(outputs.loss)
+    outputs.loss.backward()
 
     # tensor([[   486, 250099,  12747,    263,    281, 250098,  10676,      1]])
     # tensor([[250099,  64712,  10990, 250098,    287, 250097,      1]])
@@ -53,9 +50,7 @@ def generate():
     tokens = tokenizer.tokenize(text)
     print(tokens)
 
-    encode_dict2 = tokenizer('广东的省会是 <extra_id_0>', max_length=64, padding='max_length',truncation=True)
-    encode_dict3 = tokenizer('广西省的首府是 <extra_id_0>', max_length=64, padding='max_length',truncation=True)
-    inputs = {"input_ids": torch.tensor([encode_dict['input_ids'], encode_dict['input_ids']]).long()}
+    inputs = {"input_ids": torch.tensor([encode_dict['input_ids'], encode_dict['input_ids']]).long().to(device)}
 
     # generate answer
     logits = model.generate(input_ids = inputs['input_ids'], max_length=512, 
@@ -65,12 +60,6 @@ def generate():
     print(predict_label)
     # ['<extra_id_0>北京,简称 <extra_id_1>。']
 
-    logits = model.generate(input_ids = inputs['input_ids'], max_length=512, 
-            num_beams=1,top_k=20, top_p=0.9, temperature=0.9)
-    logits=logits[:,1:]
-    predict_label = [tokenizer.decode(i,skip_special_tokens=True) for i in logits]
-    print(predict_label)
-
-get_loss()
-# generate()
+# get_loss()
+generate()
 

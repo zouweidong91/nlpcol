@@ -21,6 +21,7 @@ class GenerationMixin:
         *args, 
         **kwargs
     ):
+        self.eval() # eval模式
         """batch_generate"""
         assert mode in ('greedy_search', 'beam_search', 'do_sample')
 

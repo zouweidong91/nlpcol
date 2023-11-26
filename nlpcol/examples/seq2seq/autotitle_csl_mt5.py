@@ -4,6 +4,7 @@
 # 数据集：https://github.com/CLUEbenchmark/CLGE 中的CSL数据集
 # 补充了评测指标bleu、rouge-1、rouge-2、rouge-l
 # mt5主要特点：gated-gelu, decoder的最后的dense层独立权重，rmsnorm
+# valid_data: {'rouge-1': 0.43454686332522263, 'rouge-2': 0.3217250949304608, 'rouge-l': 0.42204007502153934, 'bleu': 0.16675070297852404, 'best_bleu': 0.16675070297852404}
 
 import json
 
@@ -57,23 +58,19 @@ model = build_transformer_model(
     keep_tokens=keep_tokens,  # 只保留keep_tokens中的字，精简原字表
     skip_init=True
 ).to(device)
-model.eval()
 
 
 def generate(text):
     input_ids, _ = tokenizer.encode(text)
     input_ids = torch.tensor([input_ids], device=device)
-    print(input_ids)
 
     # logits = model.generate(input_ids, mode='do_sample', top_k=20, top_p=0.9, temperature=0.9)
     logits = model.generate(input_ids, mode='greedy_search')
-    print(logits)
     # logits = model.generate(input_ids, mode='beam_search', num_beams=4)
 
     logits=logits[:,1:] # 去掉bos
     predict_label = [tokenizer.decode(i) for i in logits]
-    return predict_label
-
+    return predict_label[0]
 
 
 # 准备数据
@@ -130,24 +127,20 @@ class Evaluator(Callback):
         self.rouge = Rouge()
         self.smooth = SmoothingFunction().method1
         self.best_bleu = 0.
-
         self.trainer = trainer
         self.save_path = save_path
-
 
     def on_epoch_end(self, steps, epoch, logs=None):
         just_show()
         metrics = self.evaluate()  # 评测模型
-        metrics_test = self.evaluate()  # 评测模型
         if metrics['bleu'] > self.best_bleu:
             self.best_bleu = metrics['bleu']
             self.trainer.save_weights(self.save_path)
 
         metrics['best_bleu'] = self.best_bleu
         print('valid_data:', metrics)
-        print('test_data:', metrics_test)
     
-    def evaluate(self, topk=1):
+    def evaluate(self):
         total = 0
         rouge_1, rouge_2, rouge_l, bleu = 0, 0, 0, 0
         for title, content in tqdm(valid_dataset):
@@ -177,7 +170,7 @@ if __name__ == '__main__':
     print(u'生成标题:', generate(u'中国的首都是extra0京'))  # 和huggingface的结果一致 
     # '<extra_id_0>北京 <extra_id_1>北京  <extra_id_2>北京 首都'
 
-    trainer.train(train_dataset, callbacks=[])
+    trainer.train(train_dataset, callbacks=[evaluator])
 
 # else:
 #     trainer.load_weights(save_path)

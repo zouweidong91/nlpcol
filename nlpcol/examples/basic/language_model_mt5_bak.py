@@ -44,32 +44,24 @@ def get_loss():
     print(input_ids)
     print(labels)
 
-    # shift_right
-    decoder_input_ids = torch.zeros_like(labels)
-    decoder_input_ids[..., 1:] = labels[..., :-1].clone() # 向右偏移一位
-    decoder_input_ids[..., 0] = 0 # 起始位置用padding代表
-    print(decoder_input_ids)
-
-    for i in range(4):
-        outputs = model(input_ids=input_ids, decoder_input_ids=decoder_input_ids)
-
-        lm_logits = outputs.lm_logits
-        loss_fn = nn.CrossEntropyLoss()
-        # move labels to correct device to enable PP 计算损失时将所有张量转移到同一设备上
-        labels = labels.to(lm_logits.device)
-        loss = loss_fn(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
-        print(loss)
-        loss.backward()
+    outputs = model(input_ids=input_ids, labels=labels)
+    lm_logits = outputs.lm_logits
+    loss_fn = nn.CrossEntropyLoss()
+    # move labels to correct device to enable PP 计算损失时将所有张量转移到同一设备上
+    labels = labels.to(lm_logits.device)
+    loss = loss_fn(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
+    print(loss)
+    loss.backward()
     
 
 def generate():
     # tokenize
-    text = u"中国的首都是extra0京"
+    text = u"中国的首都是 <extra_id_0>京"
     input_ids, _ = tokenizer.encode(text)
     tokens = tokenizer.tokenize(text)
     print(tokens, input_ids, _)
 
-    input_ids = torch.tensor([input_ids, input_ids])
+    input_ids = torch.tensor([input_ids, input_ids]).to(device)
     # logits = model.generate(input_ids, mode='do_sample', top_k=20, top_p=0.9, temperature=0.9)
     logits = model.generate(input_ids, mode='greedy_search')
     # logits = model.generate(input_ids, mode='beam_search', num_beams=4)
@@ -79,8 +71,8 @@ def generate():
     # ['<extra_id_0>北京,简称 <extra_id_1>。']
 
 
-get_loss()  # tensor(4.2471, grad_fn=<NllLossBackward0>)
-# generate()
+# get_loss()  # tensor(4.2471, grad_fn=<NllLossBackward0>)
+generate()
 
 
 

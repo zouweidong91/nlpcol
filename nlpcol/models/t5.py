@@ -261,26 +261,29 @@ class MultiHeadAttentionLayer(nn.Module):
         return x.permute(0, 2, 1, 3)  # x:  (batch_size, n_heads, seq_length, head_size)
 
     def project(self, query:Tensor, key:Tensor, value:Tensor, start_pos:int):
+        # train时无需使用kv_cache
+        if self.training:
+            return self.k(key), self.v(value)
+
         # 推理阶段，使用kv_cache
-        # train以及encoder端:
-        #     无需使用kv_cache
         # decoder-selfAtten:
         #     推理时seq_length=1
         # decoder-crossAtten:
         #     推理时query_seq_length=1
         #     key, value的seq_length为src_len
         klen = vlen = key.shape[1]
-        bsz, seqlen, _ = query.shape
+        bsz, q_len, _ = query.shape
+        
         # selfAtten
         if self.is_self_atten:
-            self.cache_k[:bsz, start_pos : start_pos + seqlen] = self.k(key)
-            self.cache_v[:bsz, start_pos : start_pos + seqlen] = self.v(value)
-            keys = self.cache_k[:bsz, : start_pos + seqlen]
-            values = self.cache_v[:bsz, : start_pos + seqlen]
+            self.cache_k[:bsz, start_pos : start_pos + q_len] = self.k(key)
+            self.cache_v[:bsz, start_pos : start_pos + q_len] = self.v(value)
+            keys = self.cache_k[:bsz, : start_pos + q_len]
+            values = self.cache_v[:bsz, : start_pos + q_len]
 
         # crossAtten
         else:
-            if start_pos == 0:
+            if start_pos == 0: # crossAtten时只需在0位置时计算一次
                 self.cache_k[:bsz, :klen] = self.k(key)
                 self.cache_v[:bsz, :vlen] = self.v(value)
 

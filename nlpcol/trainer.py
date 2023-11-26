@@ -72,7 +72,6 @@ class Trainer:
         if self.loss_fn is None:
             output = self.model(**batch)
             loss = output.loss
-            print(loss)
         
         # 外部定义loss函数 
         else:
@@ -91,10 +90,10 @@ class Trainer:
         self.update_global_step()
         self.callbacks.on_batch_begin(self.global_step, self.local_step)
 
-        loss = self.compute_loss(batch)
-        loss.backward(retain_graph=self.retain_graph)
-        self.optimizer.zero_grad()
-        self.optimizer.step()
+        loss = self.compute_loss(batch) # 计算loss
+        self.optimizer.zero_grad() # 清空梯度
+        loss.backward(retain_graph=self.retain_graph) # 计算梯度
+        self.optimizer.step() # 更新参数
 
         self.callbacks.on_batch_end(self.global_step, self.local_step)
         return loss
