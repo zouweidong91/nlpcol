@@ -28,7 +28,7 @@ model.to(device)
 model_parameter_diff(
     state_dict_1=model.state_dict(), 
     state_dict_2=torch.load(checkpoint_path, map_location='cpu')
-) 
+)
 
 
 token_ids, segments_ids = tokenizer.encode("湖北省省会在[MASK][MASK]市。")

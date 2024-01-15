@@ -4,8 +4,39 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Size, Tensor
-from nlpcol.layers.layer import LayerNorm
+from nlpcol.layers.layer import LayerNorm, RMSNorm
 from nlpcol.generation import GenerationMixin
+
+
+class BaseConfig:
+    # 做代码补全用
+    d_ff: int # ffn层的维度
+    d_model: int # 模型维度 hidden_size
+    # head_size: int # 每个atten_head的宽度
+    n_heads: int # atten_heads 数量
+    vocab_size: int
+    num_layers: int
+    num_decoder_layers: int
+
+    dropout_rate: float
+    initializer_range: float # 权重初始化标准差值
+    layer_norm_eps: float
+    
+    eos_token_id: int
+    bos_token_id: int # bos_token_id 默认为 pad_token_id
+    pad_token_id: int
+    max_seq_length:int  # 需要大于max(tar_len, src_len)， T5相对位置编码用
+    max_batch_size:int  # 推理过程中batch_size不能大于此值， kv_cache用
+
+    # decoder 模型配置
+    is_decoder: bool # 是否是decoder端
+
+    # 其他额外的默认配置
+    use_bias: bool = True # nn.liner是否使用偏置  e.g. t5不使用
+    layer_norm_type:str = 'post' # pre or post 是否在atten操作之前归一化
+    
+
+
 
 class BaseModel(nn.Module, GenerationMixin):
     def __init__(self, config: dict, **kwargs):
@@ -13,6 +44,8 @@ class BaseModel(nn.Module, GenerationMixin):
         self.skip_init = kwargs.get('skip_init', False) # 是否跳过初始化 TODO 待删除
         self.keep_tokens: list = kwargs.get('keep_tokens', None) # 要保留的词ID列表
         self.update_config(config)
+
+        self.config: BaseConfig
 
     def update_config(self, config:dict):
         """更新更新config参数
@@ -40,6 +73,9 @@ class BaseModel(nn.Module, GenerationMixin):
         elif isinstance(module, LayerNorm):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
+        elif isinstance(module, RMSNorm):
+            module.weight.data.fill_(self.config.initializer_range)
+
 
     def load_weight(self, checkpoint_path):
         """加载checkpoint_path参数"""

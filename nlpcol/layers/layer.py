@@ -45,7 +45,7 @@ class LayerNorm(nn.Module):
         return self.weight * o + self.bias
 
 
-class T5LayerNorm(nn.Module):
+class RMSNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-12):
         """t5使用的是RMSnorm (Root Mean Square) 均方根
         No bias and no subtraction of mean

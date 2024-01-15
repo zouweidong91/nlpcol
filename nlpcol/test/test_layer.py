@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from nlpcol.layers.layer import GlobalPointer, T5LayerNorm
+from nlpcol.layers.layer import GlobalPointer, RMSNorm
 from nlpcol.layers.pe import (RotaryPositionalEmbedding,
                               SinusoidalPositionalEmbedding,
                               RelativePositionalT5)
@@ -83,9 +83,9 @@ class LayerTest(unittest.TestCase):
         o:Tensor = gp(inputs, mask)
         self.assertListEqual(list(o.shape), [btz, heads, seq_len, seq_len])
 
-    def test_T5LayerNorm(self):
+    def test_RMSNorm(self):
         input = torch.randn(2,4)
-        rms_norm = T5LayerNorm(4)
+        rms_norm = RMSNorm(4)
         o = rms_norm(input)
         print(o)
 

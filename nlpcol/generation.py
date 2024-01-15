@@ -209,6 +209,7 @@ class BeamSearchScorer:
     """
     [`BeamSearchScorer`] implementing standard beam search decoding.
     每一个时间步选取前n个候选序列，将这些候选序列添加到下一个时间步的束中
+    TODO 参考 XML 实现   https://github.com/facebookresearch/XLM/blob/main/xlm/model/transformer.py#L529
     """
 
     def __init__(
