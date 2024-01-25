@@ -10,7 +10,7 @@ from nlpcol.models.base import BaseConfig as Config
 from torch import Size, Tensor
 
 # encoder 模型
-class MultiHeadAttention(nn.Module):
+class Attention(nn.Module):
     def __init__(self, config: Config):
         super().__init__()
         self.n_heads = config.n_heads
@@ -32,7 +32,7 @@ class MultiHeadAttention(nn.Module):
         bs = x.shape[0]
         return x.transpose(1, 2).contiguous().view(bs, -1, self.n_heads * self.dim_per_head)
 
-    def get_mask(self, key_mask:Tensor) -> Tensor:
+    def get_mask(self, scores:Tensor, key_mask:Tensor):
         # 目的是为了适配多头注意力机制，[batch_size, to_seq_length] -> [batch_size, 1, 1, to_seq_length]
         # 广播到[batch_size, num_heads, from_seq_length, to_seq_length]尺寸
         # bert源码中注明不考虑from_tensor的mask。因为在下游任务如ner中，也会对超出input_ids的部分忽略处理。
@@ -88,7 +88,7 @@ class MultiHeadAttention(nn.Module):
 
 
 # encoder-decoder 模型
-class MultiHeadAttentionEncDec(MultiHeadAttention):
+class EncDecAttention(Attention):
     def __init__(self, config: Config, is_self_atten=True):
         """_summary_
 
@@ -103,10 +103,10 @@ class MultiHeadAttentionEncDec(MultiHeadAttention):
 
         # kv_cache
         self.cache_k = torch.zeros(
-            config.max_batch_size, config.max_seq_length, config.d_model, 
+            config.max_batch_size, config.max_position, config.d_model, 
         )
         self.cache_v = torch.zeros(
-            config.max_batch_size, config.max_seq_length, config.d_model, 
+            config.max_batch_size, config.max_position, config.d_model, 
         )
 
     def get_mask(self, scores:Tensor, key_mask:Tensor):

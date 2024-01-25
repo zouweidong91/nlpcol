@@ -31,12 +31,13 @@ class GenerationMixin:
         batch_size = input_ids.shape[0]
         device = input_ids.device
         eos_token_id_tensor = torch.tensor([self.config.eos_token_id]).to(device)
+        max_length = kwargs['max_length']
 
         enc_output = self.get_encoder_output(input_ids)
         decoder_input_ids = torch.ones((batch_size, 1), dtype=torch.long, device=device) * self.config.bos_token_id
         unfinished_sequences = torch.ones(batch_size, dtype=torch.long, device=device)
 
-        for step in range(self.config.max_seq_length):
+        for step in range(max_length):
             # 获取dec端的输出
             input_ids = self.prepare_inputs_for_generation(decoder_input_ids)
 
@@ -73,7 +74,7 @@ class GenerationMixin:
         return input_ids[:, -1:]
 
 
-    def greedy_search(self, scores: Tensor) -> Tensor:
+    def greedy_search(self, scores: Tensor, *args, **kwargs) -> Tensor:
         next_tokens = torch.argmax(scores, dim=-1) # (batch_size)
         return next_tokens
 
@@ -83,7 +84,9 @@ class GenerationMixin:
         scores: Tensor, # (batch_size, vocab_size)
         top_k: int = None, # 取概率最大的 K 个词
         top_p: float = None,  # 小于1。累积概率超过概率 p 的最小单词集中进行 一般取0.9左右
-        temperature: float = 1 # 温度参数(0,2)，temperature<1时，拉大分值间的差异，softmax后分值大的采样概率更高
+        temperature: float = 1, # 温度参数(0,2)，temperature<1时，拉大分值间的差异，softmax后分值大的采样概率更高
+        *args, 
+        **kwargs
     ) -> Tensor:
         # top-p 和 top-K 采样于传统的 贪心 和 波束 搜索相比，能产生更流畅的文本
         scores = scores / temperature
@@ -122,6 +125,7 @@ class GenerationMixin:
         batch_size = input_ids.shape[0]
         device = input_ids.device
         batch_beam_size = batch_size * num_beams
+        max_length = kwargs['max_length']
 
         # 对input_ids张量进行扩展
         input_ids = input_ids.repeat_interleave(num_beams, dim=0)  # (batch_size*num_beams, seq_len)  [0 0 1 1 2 2]
@@ -142,7 +146,7 @@ class GenerationMixin:
         beam_scores[:, 1:] = -1e9
         beam_scores = beam_scores.view((batch_size * num_beams,)) # (batch_size * num_beams)
 
-        for step in range(self.config.max_seq_length):
+        for step in range(max_length):
             # 获取dec端的输出
             input_ids = self.prepare_inputs_for_generation(decoder_input_ids)
 

@@ -6,7 +6,8 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from nlpcol.activations import get_activation
-from nlpcol.layers.attention import AttentionOutput, MultiHeadAttention
+from nlpcol.layers.attention import Attention, AttentionOutput
+from nlpcol.layers.ffn import FFN
 from nlpcol.layers.layer import LayerNorm
 from torch import Size, Tensor
 
@@ -43,8 +44,6 @@ from .base import BaseConfig, BaseModel
 
 
 class Config(BaseConfig):
-    # 以下参数来自config.json文件
-    
     def __init__(self, **kwargs):
         # 通用配置
         self.d_model: int = kwargs.get('hidden_size')
@@ -62,7 +61,7 @@ class Config(BaseConfig):
         self.attention_probs_dropout_prob: float = kwargs.get('attention_probs_dropout_prob') # 直接用hidden_dropout_prob
         self.directionality: str = kwargs.get('directionality')
         self.hidden_act: str = kwargs.get('hidden_act')
-        self.max_position_embeddings: int = kwargs.get('max_position_embeddings')
+        self.max_position: int = kwargs.get('max_position_embeddings')
         self.model_type: str = kwargs.get('model_type')
         self.pooler_fc_size: int = kwargs.get('pooler_fc_size')
         self.pooler_num_attention_heads: int = kwargs.get('pooler_num_attention_heads')
@@ -78,8 +77,8 @@ class BertEmbeddings(nn.Module):
     def __init__(self, config: Config):
         super().__init__()
         # padding_idx 将相应位置的embedding全部设置为0， 不参与梯度计算，训练过程参数也不更新
-        self.word_embeddings = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_token_id)
-        self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.d_model)
+        self.token_embeddings = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_token_id)
+        self.position_embeddings = nn.Embedding(config.max_position, config.d_model)
         self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.d_model)
 
         self.layer_norm = LayerNorm(config.d_model, config.layer_norm_eps)
@@ -96,7 +95,7 @@ class BertEmbeddings(nn.Module):
         device = input_ids.device
         btz, seq_len = input_ids.shape
 
-        inputs_embeddings = self.word_embeddings(input_ids)
+        inputs_embeddings = self.token_embeddings(input_ids)
 
         if token_type_ids is None:
             token_type_ids = torch.zeros(input_ids.shape, dtype=torch.long, device=device)
@@ -113,41 +112,6 @@ class BertEmbeddings(nn.Module):
         return embeddings
         
 
-class FeedForward(nn.Module):
-    """前馈层DenseActDense
-    """
-    def __init__(self, config:Config):
-        super().__init__()
-        self.dense_1 = nn.Linear(config.d_model, config.d_ff)
-        self.dense_2 = nn.Linear(config.d_ff, config.d_model)
-        self.act = get_activation(config.hidden_act)
-
-    def forward(self, hidden_states: Tensor) -> Tensor:
-        hidden_states = self.dense_1(hidden_states)
-        hidden_states = self.act(hidden_states)
-        hidden_states = self.dense_2(hidden_states)
-        return hidden_states
-
-
-class FFN(nn.Module):
-    """顺序为： Drop --> Add --> LayerNorm
-    """
-    def __init__(self, config: Config):
-        super().__init__()
-        self.ff = FeedForward(config)
-        self.layer_norm = LayerNorm(config.d_model, eps=config.layer_norm_eps)
-        self.dropout = nn.Dropout(config.dropout_rate)
-
-    def forward(self, hidden_states: Tensor) -> Tensor:
-        """
-        Args:
-            hidden_states (Tensor): attention_output 注意力层的输出
-        """
-        forwarded_states = self.ff(hidden_states)
-        hidden_states = self.layer_norm(self.dropout(forwarded_states) + hidden_states)
-        return hidden_states
-
-
 class BertLayer(nn.Module):
     """Transformer层 encoder block
         顺序为： Attention --> Add --> LayerNorm --> Feed Forward --> Add --> LayerNorm
@@ -157,7 +121,7 @@ class BertLayer(nn.Module):
     """
     def __init__(self, config: Config):
         super().__init__()
-        self.multi_head_attention = MultiHeadAttention(config)
+        self.multi_head_attention = Attention(config)
         self.attention_output = AttentionOutput(config)
         self.ffn = FFN(config)
     
@@ -325,7 +289,7 @@ class BertModel(BaseModel):
         """
         prefix = 'bert'
         mapping = {
-            'embeddings.word_embeddings.weight':  f'{prefix}.embeddings.word_embeddings.weight',
+            'embeddings.token_embeddings.weight':  f'{prefix}.embeddings.word_embeddings.weight',
             'embeddings.position_embeddings.weight':  f'{prefix}.embeddings.position_embeddings.weight',
             'embeddings.token_type_embeddings.weight':  f'{prefix}.embeddings.token_type_embeddings.weight',
             'embeddings.layer_norm.weight':  f'{prefix}.embeddings.LayerNorm.gamma',

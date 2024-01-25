@@ -8,7 +8,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from nlpcol.activations import get_activation
-from nlpcol.layers.attention import AttentionOutput, MultiHeadAttentionEncDec
+from nlpcol.layers.attention import AttentionOutput, EncDecAttention
+from nlpcol.layers.ffn import FFN, DenseGatedActDense
 from nlpcol.layers.layer import RMSNorm
 from nlpcol.layers.pe import RelativePositionalT5
 from torch import Size, Tensor
@@ -40,44 +41,7 @@ from .base import BaseConfig, BaseModel
 # t5不使用bias，并且使用rmsnorm
 # t5为pre_norm
 
-
 # 实现原始mt5  t5没有中文预训练权重。用Mt5实现 T5.1.1
-
-# TODO 配置映射 合并generation_config配置
-class Config(BaseConfig):
-    # 以下参数来自mt5 base config.json文件
-    # 显式声明，支持下文自动补全
-    def __init__(self, **kwargs):
-        # 通用配置
-        self.d_ff: int = kwargs.get('d_ff')
-        self.d_model: int = kwargs.get('d_model')
-        self.n_heads: int = kwargs.get('num_heads')
-        self.vocab_size: int = kwargs.get('vocab_size')
-        self.num_layers: int = kwargs.get('num_layers')
-        self.num_decoder_layers: int = kwargs.get('num_decoder_layers')
-        self.dropout_rate: float = kwargs.get('dropout_rate')
-        self.initializer_range: float = kwargs.get('initializer_factor')
-        self.layer_norm_eps: float = kwargs.get('layer_norm_epsilon')
-        self.eos_token_id: int = kwargs.get('eos_token_id')
-        self.bos_token_id: int = kwargs.get('bos_token_id', 0) # bos_token_id 默认为 pad_token_id
-        self.pad_token_id: int = kwargs.get('pad_token_id')
-        self.max_seq_length:int = kwargs.get('max_seq_length', 512)  # 需要大于max(tar_len, src_len)， 相对位置编码用
-        self.max_batch_size:int = kwargs.get('max_batch_size', 16)  # 推理过程中batch_size不能大于此值， kv_cache用
-        self.use_bias: bool = False
-        self.layer_norm_type = 'pre'
-
-        # T5 config配置
-        self.architectures: str = kwargs.get('architectures')
-        self.model_type: str = kwargs.get('model_type')
-        self.decoder_start_token_id: int = kwargs.get('decoder_start_token_id')
-        self.feed_forward_proj: str = kwargs.get('feed_forward_proj')
-        self.is_encoder_decoder: bool = kwargs.get('is_encoder_decoder')
-        self.output_past: bool = kwargs.get('output_past')
-        self.relative_attention_num_buckets: int = kwargs.get('relative_attention_num_buckets')
-        self.tie_word_embeddings: bool = kwargs.get('tie_word_embeddings')
-        self.tokenizer_class: str = kwargs.get('tokenizer_class')
-        self.use_cache: bool = kwargs.get('use_cache')
-
 
 """
 {
@@ -108,64 +72,64 @@ class Config(BaseConfig):
   "use_cache": true,
   "vocab_size": 250112
 }
-
 """
+
+
+class Config(BaseConfig):
+    def __init__(self, **kwargs):
+        # 通用配置
+        self.d_model: int = kwargs.get('d_model')
+        self.d_ff: int = kwargs.get('d_ff')
+        self.n_heads: int = kwargs.get('num_heads')
+        self.vocab_size: int = kwargs.get('vocab_size')
+        self.num_layers: int = kwargs.get('num_layers')
+        self.dropout_rate: float = kwargs.get('dropout_rate')
+        self.initializer_range: float = kwargs.get('initializer_factor')
+        self.layer_norm_eps: float = kwargs.get('layer_norm_epsilon')
+        self.eos_token_id: int = kwargs.get('eos_token_id')
+        self.bos_token_id: int = kwargs.get('bos_token_id', 0) # bos_token_id 默认为 pad_token_id
+        self.pad_token_id: int = kwargs.get('pad_token_id')
+        self.max_position:int = kwargs.get('max_position', 512)  # 需要大于max(tar_len, src_len)， 相对位置编码用
+        self.max_batch_size:int = kwargs.get('max_batch_size', 16)  # 推理过程中batch_size不能大于此值， kv_cache用
+        self.use_bias: bool = False
+        self.layer_norm_type = 'pre'
+        self.hidden_act: str = kwargs.get('hidden_act', "gelu_new")
+
+        # T5 config配置
+        self.architectures: str = kwargs.get('architectures')
+        self.model_type: str = kwargs.get('model_type')
+        self.decoder_start_token_id: int = kwargs.get('decoder_start_token_id')
+        self.feed_forward_proj: str = kwargs.get('feed_forward_proj')
+        self.is_encoder_decoder: bool = kwargs.get('is_encoder_decoder')
+        self.output_past: bool = kwargs.get('output_past')
+        self.relative_attention_num_buckets: int = kwargs.get('relative_attention_num_buckets')
+        self.tie_word_embeddings: bool = kwargs.get('tie_word_embeddings')
+        self.tokenizer_class: str = kwargs.get('tokenizer_class')
+        self.use_cache: bool = kwargs.get('use_cache')
+
+
 
 class T5Embeddings(nn.Module):
     def __init__(self, config: Config):
         super().__init__()
-        self.word_embeddings = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_token_id)
+        self.token_embeddings = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_token_id)
         self.dropout = nn.Dropout(config.dropout_rate)
 
     def forward(self, input_ids: Optional[torch.LongTensor]) -> Tensor:
-        embeddings = self.word_embeddings(input_ids)
+        embeddings = self.token_embeddings(input_ids)
         embeddings = self.dropout(embeddings)
         return embeddings
 
-class PositionWiseFeedForward(nn.Module):
-    """T5DenseGatedActDense
-    位置感知前馈网络
-        通常包括两个线性层和一个非线性激活函数，这两个线性变换是位置独立的，因此被称为“位置感知”
-        通常的结构： 线性变换1 --> 非线性激活函数 --> 线性变换2
-    """
-    def __init__(self, config: Config):
-        super().__init__()
-        self.dense_1 = nn.Linear(config.d_model, config.d_ff, bias=config.use_bias)
-        self.dense_2 = nn.Linear(config.d_model, config.d_ff, bias=config.use_bias)
-        self.dense_output = nn.Linear(config.d_ff, config.d_model, bias=config.use_bias)
-        self.drop = nn.Dropout(config.dropout_rate)
 
-        dense_act_fn = "gelu_new"
-        self.act = get_activation(dense_act_fn)
-        
-    def forward(self, hidden_states: Tensor) -> Tensor:
-        # hidden_states shape: (btz, seq_len, hidden_size)
-        hidden_gelu = self.act(self.dense_1(hidden_states))
-        hidden_linear = self.dense_2(hidden_states)
-        hidden_states = hidden_gelu * hidden_linear
-        hidden_states = self.drop(hidden_states)
+class T5FFN(FFN):
+    def get_ff(self, config):
+        return DenseGatedActDense(config)
 
-        hidden_states = self.dense_output(hidden_states)
-        # hidden_states shape: (btz, seq_len, d_ff)
-        return hidden_states
-
-class FFN(nn.Module):
-    """顺序为： LN --> FF --> Add
-    """
-    def __init__(self, config: Config):
-        super().__init__()
-        self.ff = PositionWiseFeedForward(config)
-        self.layer_norm = RMSNorm(config.d_model, eps=config.layer_norm_eps)
-        self.dropout = nn.Dropout(config.dropout_rate)
-
-    def forward(self, hidden_states: Tensor) -> Tensor:
-        forwarded_states = self.layer_norm(hidden_states)
-        forwarded_states = self.ff(forwarded_states)
-        hidden_states = self.dropout(forwarded_states) + hidden_states  # add为标准化之前的hidden_states
-        return hidden_states
+    def get_ln(self, config: Config):
+        return RMSNorm(config.d_model, eps=config.layer_norm_eps)
 
 
-class T5AttentionLayer(MultiHeadAttentionEncDec):
+class T5AttentionLayer(EncDecAttention):
     def __init__(self, config: Config, has_relative_attention_bias=False, is_self_atten=True):
         """_summary_
 
@@ -183,7 +147,7 @@ class T5AttentionLayer(MultiHeadAttentionEncDec):
             self.relative_attention_bias = nn.Embedding(config.relative_attention_num_buckets, config.n_heads)
             # print(config.max_seq_length)
             self.relative_position = RelativePositionalT5(
-                config.max_seq_length, config.max_seq_length, self.relative_attention_num_buckets, is_decoder=self.is_decoder
+                config.max_position, config.max_position, self.relative_attention_num_buckets, is_decoder=self.is_decoder
             )
 
     def compute_bias(self, qlen, klen):
@@ -235,7 +199,7 @@ class T5Layer(nn.Module):
             self.cross_attention = T5AttentionLayer(config, is_self_atten=False)
             self.cross_attention_output = AttentionOutput(config)
 
-        self.ffn = FFN(config)
+        self.ffn = T5FFN(config)
 
 
     def forward(
@@ -348,7 +312,6 @@ class T5Model(BaseModel):
 
         dec_config = copy.deepcopy(config)
         dec_config.is_decoder = True
-        dec_config.num_layers = config.num_decoder_layers
         self.decoder = T5Stack(dec_config, embed)
 
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
@@ -375,14 +338,16 @@ class T5Model(BaseModel):
                 last_hidden_state=encoder_outputs, 
                 attention_mask=attention_mask
             )
-
-        # label shift right  label padding位为-100, decoder_input_ids需要将-100替换为0
+        
+        # label shift right  
+        # 北 京 在 中 国 </s>
+        # <s> 北 京 在 中 国
         if labels is not None and decoder_input_ids is None:
             decoder_input_ids = torch.zeros_like(labels)
             decoder_input_ids[..., 1:] = labels[..., :-1].clone() # 向右偏移一位
             decoder_input_ids[..., 0] = self.config.bos_token_id # 起始位置用padding代表
             pad_token_id = self.config.pad_token_id
-            # replace possible -100 values in labels by `pad_token_id`
+            # label padding位为-100, decoder_input_ids需要将-100替换为0
             decoder_input_ids.masked_fill_(decoder_input_ids==-100, pad_token_id)
             
         # decoder
@@ -419,8 +384,8 @@ class T5Model(BaseModel):
         不同代码参数命名不同，需要做参数映射   new_key: old_key
         """
         mapping = {
-            "encoder.embed.word_embeddings.weight": "encoder.embed_tokens.weight",
-            "decoder.embed.word_embeddings.weight": "decoder.embed_tokens.weight",
+            "encoder.embed.token_embeddings.weight": "encoder.embed_tokens.weight",
+            "decoder.embed.token_embeddings.weight": "decoder.embed_tokens.weight",
             "encoder.layers.0.self_attention.relative_attention_bias.weight": "encoder.block.0.layer.0.SelfAttention.relative_attention_bias.weight",
             "decoder.layers.0.self_attention.relative_attention_bias.weight": "decoder.block.0.layer.0.SelfAttention.relative_attention_bias.weight",
         }
@@ -450,7 +415,7 @@ class T5Model(BaseModel):
             mapping.update(self_atten_fn('encoder', i, 0))
             mapping.update(ffn_fn('encoder', i, 1))
 
-        for i in range(self.config.num_decoder_layers):
+        for i in range(self.config.num_layers):
             mapping.update(self_atten_fn('decoder', i, 0))
             mapping.update(cross_atten_fn('decoder', i, 1))
             mapping.update(ffn_fn('decoder', i, 2))

@@ -1,65 +1,80 @@
 
+# 基础测试：lm预测
 
 import torch
 import torch.nn as nn
-from nlpcol.model import build_transformer_model
+import json
+from nlpcol.model import build_transformer_model, load_config
 from nlpcol.models.bert import BertModel, BertOutput
 from nlpcol.tokenizers import Tokenizer, SpTokenizer
-from nlpcol.utils.snippets import model_parameter_diff, seed_everything
+from nlpcol.utils.snippets import model_parameter_diff, seed_everything, save_model_parameter
 from nlpcol.config import device
+from torch.nn import functional as F
 
 seed_everything(42)
 
 
-# transformers版本
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-pretraine_dir = '/home/dataset/pretrain_ckpt/t5/mt5-base/'
-tokenizer = AutoTokenizer.from_pretrained(pretraine_dir)
-model = AutoModelForSeq2SeqLM.from_pretrained(pretraine_dir).to(device)
+
+model_path = "/home/dataset/pretrain_ckpt/t5/mt5-base"
+config_path = model_path + "/config.json"
+checkpoint_path = model_path + '/pytorch_model.bin'
+spm_path = model_path + '/spiece.model'
+
+# 建立分词器
+tokenizer = SpTokenizer(spm_path, token_start=None, token_end='</s>')
+
+# 需要传入参数with_mlm
+model = build_transformer_model(checkpoint_path, config_path, 't5', extra_config={"max_seq_length": 512}, skip_init=True)  # 建立模型，加载权重 下游任务无额外参数 暂时不需初始化
 model.eval()
 model.to(device)
 
 
+# model_parameter_diff(
+#     state_dict_1=model.state_dict(), 
+#     state_dict_2=torch.load(checkpoint_path, map_location='cpu')
+# ) 
+
 # training
 def get_loss():
-    input_ids = tokenizer("The <extra_id_0> walks in <extra_id_1> park", return_tensors="pt").input_ids.to(device)
-    labels = tokenizer("<extra_id_0> cute dog <extra_id_1> the <extra_id_2>", return_tensors="pt").input_ids.to(device)
+    input_ids, _ = tokenizer.encode("The <extra_id_0> walks in <extra_id_1> park")
+    labels, _ = tokenizer.encode("<extra_id_0> cute dog <extra_id_1> the <extra_id_2>")
+    input_ids = torch.tensor([input_ids]).to(device)
+    labels = torch.tensor([labels]).to(device)
 
     print(input_ids)
     print(labels)
 
     outputs = model(input_ids=input_ids, labels=labels)
-    encoder_last_hidden_state = outputs.encoder_last_hidden_state
-
-    print(encoder_last_hidden_state.shape)
-    print(outputs.loss)
-    outputs.loss.backward()
-
-    # tensor([[   486, 250099,  12747,    263,    281, 250098,  10676,      1]])
-    # tensor([[250099,  64712,  10990, 250098,    287, 250097,      1]])
-    # torch.Size([1, 8, 768])
-    # tensor(4.2471, grad_fn=<NllLossBackward0>)
-
+    lm_logits = outputs.lm_logits
+    loss_fn = nn.CrossEntropyLoss()
+    # move labels to correct device to enable PP 计算损失时将所有张量转移到同一设备上
+    labels = labels.to(lm_logits.device)
+    loss = loss_fn(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
+    print(loss)
+    loss.backward()
+    
 
 def generate():
     # tokenize
-    text = u"The <extra_id_0> walks in <extra_id_1> park" #  <extra_id_1> -->  _<extra_id_1>  空格 --> _
-
     text = u"中国的首都是 <extra_id_0>京"
-    encode_dict = tokenizer(text, max_length=64, padding='max_length',truncation=True)
+    input_ids, _ = tokenizer.encode(text)
     tokens = tokenizer.tokenize(text)
-    print(tokens)
+    print(tokens, input_ids, _)
 
-    inputs = {"input_ids": torch.tensor([encode_dict['input_ids'], encode_dict['input_ids']]).long().to(device)}
-
-    # generate answer
-    logits = model.generate(input_ids = inputs['input_ids'], max_length=512, 
-            num_beams=1,top_k=20, top_p=0.9, temperature=0.9)
-    logits=logits[:,1:]
-    predict_label = [tokenizer.decode(i,skip_special_tokens=True) for i in logits]
+    input_ids = torch.tensor([input_ids, input_ids]).to(device)
+    # logits = model.generate(input_ids, mode='do_sample', top_k=20, top_p=0.9, temperature=0.9)
+    logits = model.generate(input_ids, mode='greedy_search', max_length=32)
+    # logits = model.generate(input_ids, mode='beam_search', num_beams=4)
+    logits=logits[:,1:] # 去掉bos
+    predict_label = [tokenizer.decode(i) for i in logits]
     print(predict_label)
     # ['<extra_id_0>北京,简称 <extra_id_1>。']
 
-# get_loss()
+
+# get_loss()  # tensor(4.2471, grad_fn=<NllLossBackward0>)
 generate()
+
+
+
+
 

@@ -46,7 +46,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 seed_everything(42)
 
 
-tokenizer = SpTokenizer(spm_path, token_start=None, token_end='</s>')
+tokenizer = SpTokenizer(spm_path, token_start=None, token_end='</s>') # 对分词结果加上 </s> 标记
 keep_tokens = json.load(open(keep_tokens_path))
 
 
