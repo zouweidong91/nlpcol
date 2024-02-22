@@ -22,7 +22,6 @@ tokenizer = Tokenizer(vocab_path, do_lower_case=True)
 
 # 需要传入参数with_mlm
 model = build_transformer_model(checkpoint_path, config_path, with_mlm=True, with_pool=True, with_nsp=True)  # 建立模型，加载权重
-# with_mlm 会导致权重多60M？ 但参量都是一样的啊
 model.to(device)
 
 model_parameter_diff(

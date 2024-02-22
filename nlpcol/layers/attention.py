@@ -10,7 +10,7 @@ from nlpcol.models.base import BaseConfig as Config
 from torch import Size, Tensor
 
 # encoder 模型
-class Attention(nn.Module):
+class EncAttention(nn.Module):
     def __init__(self, config: Config):
         super().__init__()
         self.n_heads = config.n_heads
@@ -32,7 +32,7 @@ class Attention(nn.Module):
         bs = x.shape[0]
         return x.transpose(1, 2).contiguous().view(bs, -1, self.n_heads * self.dim_per_head)
 
-    def get_mask(self, scores:Tensor, key_mask:Tensor):
+    def get_padding_mask(self, key_mask:Tensor):
         # 目的是为了适配多头注意力机制，[batch_size, to_seq_length] -> [batch_size, 1, 1, to_seq_length]
         # 广播到[batch_size, num_heads, from_seq_length, to_seq_length]尺寸
         # bert源码中注明不考虑from_tensor的mask。因为在下游任务如ner中，也会对超出input_ids的部分忽略处理。
@@ -40,9 +40,12 @@ class Attention(nn.Module):
         # don't actually care if we attend *from* padding tokens (only *to* padding)
         # tokens so we create a tensor of all ones.
         # enc_self_att, dec_cross_att
-        key_mask = key_mask.unsqueeze(1).unsqueeze(2)  # key_mask[:, None, None, :]
+        key_mask = key_mask.unsqueeze(1).unsqueeze(2)           # (bs, None, None, klen)
         key_mask = (1.0 - key_mask) * - 10000.0 # 传入的mask的非padding部分为1, padding部分为0
         return key_mask
+
+    def get_mask(self, scores:Tensor, key_mask:Tensor):
+        return self.get_padding_mask(key_mask)
 
     def score_scale(self, scores:Tensor) -> Tensor:
         # atten_score是否缩放
@@ -87,8 +90,73 @@ class Attention(nn.Module):
         
 
 
+# decoder 模型
+class DecAttention(EncAttention):
+    def __init__(self, config: Config):
+        """_summary_
+
+        Args:
+            config (Config): _description_
+        """
+        super().__init__(config)
+
+        # kv_cache
+        self.cache_k = torch.zeros(
+            config.max_batch_size, config.max_position, config.d_model, 
+        )
+        self.cache_v = torch.zeros(
+            config.max_batch_size, config.max_position, config.d_model, 
+        )
+
+    def get_lm_mask(self, scores:Tensor):
+        """定义下三角矩阵的atten_mask， 语言模型用
+        scores: [batch_size, num_heads, from_seq_len, to_seq_len]
+        key_mask: [batch_size, to_seq_length]
+        """
+        qlen, klen = scores.shape[2:]   # 推理阶段qlen==1
+        key_mask = torch.tril(
+            torch.ones(klen, klen, dtype=torch.long, device=scores.device), diagonal=0
+        )
+        # (batch_size, n_heads, klen, klen)
+        key_mask = key_mask.unsqueeze(0).unsqueeze(1)               # (bs, n_heads, klen, klen)
+        key_mask = key_mask[:, :, -qlen:, :]
+
+        key_mask = (1.0 - key_mask) * - 10000.0     # 传入的mask的非padding部分为1, padding部分为0
+        return key_mask
+
+    def get_mask(self, scores:Tensor, key_mask:Tensor):
+        return self.get_lm_mask(scores)
+
+    def project(self, query:Tensor, key:Tensor, value:Tensor, start_pos:int):
+        # 推理阶段，使用kv_cache
+        # decoder-selfAtten:
+        #     推理时seq_length=1
+        bsz, q_len, _ = query.shape
+        self.cache_k[:bsz, start_pos : start_pos + q_len] = self.k(key)
+        self.cache_v[:bsz, start_pos : start_pos + q_len] = self.v(value)
+        keys = self.cache_k[:bsz, : start_pos + q_len]
+        values = self.cache_v[:bsz, : start_pos + q_len]
+
+        return keys.to(key), values.to(value)
+
+    def forward(self, query, key, value, key_mask:Tensor, start_pos:int):
+        # query, key, value: [bsz, seqlen, head_size] 
+        # start_pos: Starting position for caching.
+        q = self.q(query)
+
+        # train时无需使用kv_cache
+        if self.training:
+            k = self.k(key)
+            v = self.v(value)
+        else:
+            k, v = self.project(query, key, value, start_pos)
+    
+        context = self.core_attention(q, k, v, key_mask)
+        return context
+
+
 # encoder-decoder 模型
-class EncDecAttention(Attention):
+class EncDecAttention(DecAttention):
     def __init__(self, config: Config, is_self_atten=True):
         """_summary_
 
@@ -101,13 +169,6 @@ class EncDecAttention(Attention):
         self.is_decoder = config.is_decoder
         self.is_self_atten = is_self_atten
 
-        # kv_cache
-        self.cache_k = torch.zeros(
-            config.max_batch_size, config.max_position, config.d_model, 
-        )
-        self.cache_v = torch.zeros(
-            config.max_batch_size, config.max_position, config.d_model, 
-        )
 
     def get_mask(self, scores:Tensor, key_mask:Tensor):
         """
@@ -115,26 +176,14 @@ class EncDecAttention(Attention):
         key_mask: [batch_size, to_seq_length]
         """
         if key_mask is not None:
-            key_mask = key_mask.unsqueeze(1).unsqueeze(2)  # key_mask[:, None, None, :]
+            # enc_self_atten  dec_cross_atten
+            return self.get_padding_mask(key_mask)
         else:
-            # dec_self_att 下三角矩阵
-            qlen, klen = scores.shape[2:] # 推理阶段qlen==1
-            key_mask = torch.tril(
-                torch.ones(klen, klen, dtype=torch.long, device=scores.device), diagonal=0
-            )
-            # (batch_size, n_heads, klen, klen)
-            key_mask = key_mask.unsqueeze(0).unsqueeze(1)
-            key_mask = key_mask[:, :, -qlen:, :]
-
-        key_mask = (1.0 - key_mask) * - 10000.0 # 传入的mask的非padding部分为1, padding部分为0
-        return key_mask
+            # dec_self_atten
+            return self.get_lm_mask(scores)
 
 
     def project(self, query:Tensor, key:Tensor, value:Tensor, start_pos:int):
-        # train时无需使用kv_cache
-        if self.training:
-            return self.k(key), self.v(value)
-
         # 推理阶段，使用kv_cache
         # decoder-selfAtten:
         #     推理时seq_length=1
@@ -162,15 +211,6 @@ class EncDecAttention(Attention):
 
         return keys.to(key), values.to(value)
 
-    def forward(self, query, key, value, key_mask:Tensor, start_pos:int):
-        # query, key, value: [bsz, seqlen, head_size] 
-        # start_pos: Starting position for caching.
-        q = self.q(query)
-        k, v = self.project(query, key, value, start_pos)
-    
-        context = self.core_attention(q, k, v, key_mask)
-        return context
-
 
 
 class AttentionOutput(nn.Module):
@@ -186,7 +226,10 @@ class AttentionOutput(nn.Module):
         self.dropout = nn.Dropout(config.dropout_rate)
 
         if self.layer_norm_type == "post":
-            self.layer_norm = LayerNorm(config.d_model, config.layer_norm_eps)
+            self.layer_norm = self.get_ln(config)
+
+    def get_ln(self, config: Config):
+        return LayerNorm(config.d_model, config.layer_norm_eps)
 
     def forward(self, context: Tensor, input_tensor: Tensor) -> Tensor:
         """

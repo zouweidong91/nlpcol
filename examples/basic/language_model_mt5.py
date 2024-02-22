@@ -23,16 +23,15 @@ spm_path = model_path + '/spiece.model'
 # 建立分词器
 tokenizer = SpTokenizer(spm_path, token_start=None, token_end='</s>')
 
-# 需要传入参数with_mlm
 model = build_transformer_model(checkpoint_path, config_path, 't5', extra_config={"max_seq_length": 512}, skip_init=True)  # 建立模型，加载权重 下游任务无额外参数 暂时不需初始化
 model.eval()
 model.to(device)
 
 
-# model_parameter_diff(
-#     state_dict_1=model.state_dict(), 
-#     state_dict_2=torch.load(checkpoint_path, map_location='cpu')
-# ) 
+model_parameter_diff(
+    state_dict_1=model.state_dict(), 
+    state_dict_2=torch.load(checkpoint_path, map_location='cpu')
+) 
 
 # training
 def get_loss():
@@ -71,7 +70,7 @@ def generate():
     # ['<extra_id_0>北京,简称 <extra_id_1>。']
 
 
-# get_loss()  # tensor(4.2471, grad_fn=<NllLossBackward0>)
+get_loss()  # tensor(4.2471, grad_fn=<NllLossBackward0>)
 generate()
 
 

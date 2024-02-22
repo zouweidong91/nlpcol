@@ -91,9 +91,11 @@ class Config(BaseConfig):
         self.pad_token_id: int = kwargs.get('pad_token_id')
         self.max_position:int = kwargs.get('max_position', 512)  # 需要大于max(tar_len, src_len)， 相对位置编码用
         self.max_batch_size:int = kwargs.get('max_batch_size', 16)  # 推理过程中batch_size不能大于此值， kv_cache用
+        self.hidden_act: str = kwargs.get('hidden_act', "gelu_new")
+
         self.use_bias: bool = False
         self.layer_norm_type = 'pre'
-        self.hidden_act: str = kwargs.get('hidden_act', "gelu_new")
+        self.tie_word_embeddings: bool = False
 
         # T5 config配置
         self.architectures: str = kwargs.get('architectures')
@@ -103,7 +105,6 @@ class Config(BaseConfig):
         self.is_encoder_decoder: bool = kwargs.get('is_encoder_decoder')
         self.output_past: bool = kwargs.get('output_past')
         self.relative_attention_num_buckets: int = kwargs.get('relative_attention_num_buckets')
-        self.tie_word_embeddings: bool = kwargs.get('tie_word_embeddings')
         self.tokenizer_class: str = kwargs.get('tokenizer_class')
         self.use_cache: bool = kwargs.get('use_cache')
 
@@ -304,17 +305,19 @@ class T5Model(BaseModel):
     def __init__(self, config: Config, **kwargs):
         super().__init__(config, **kwargs)
         self.config = config = Config(**config)
-        embed = T5Embeddings(config) # 在enc和dec之间共享embedding, 不声明为self.embed,则模型参数中没有embed.weight这个权重
+        self.embed = T5Embeddings(config) # 在enc和dec之间共享embedding
 
         enc_config = copy.deepcopy(config)
         enc_config.is_decoder = False
-        self.encoder = T5Stack(enc_config, embed)
+        self.encoder = T5Stack(enc_config, self.embed)
 
         dec_config = copy.deepcopy(config)
         dec_config.is_decoder = True
-        self.decoder = T5Stack(dec_config, embed)
+        self.decoder = T5Stack(dec_config, self.embed)
 
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
+
+        self.tie_weights()
 
 
     def forward(
@@ -322,7 +325,6 @@ class T5Model(BaseModel):
         input_ids:torch.LongTensor=None,
         decoder_input_ids:torch.LongTensor=None,
         attention_mask:torch.FloatTensor=None, # encoder端的selfAtten以及decoder端的crossAtten
-        decoder_attention_mask:torch.FloatTensor=None, # decoder端的selfAtten
         encoder_outputs=None,
         labels:torch.LongTensor=None,
         start_pos:int=0 # 训练状态下 start_pos=0
@@ -340,20 +342,19 @@ class T5Model(BaseModel):
             )
         
         # label shift right  
-        # 北 京 在 中 国 </s>
-        # <s> 北 京 在 中 国
+        # 北 京 在 中 国 </s>  labels
+        # <s> 北 京 在 中 国   decoder_input_ids
         if labels is not None and decoder_input_ids is None:
             decoder_input_ids = torch.zeros_like(labels)
             decoder_input_ids[..., 1:] = labels[..., :-1].clone() # 向右偏移一位
             decoder_input_ids[..., 0] = self.config.bos_token_id # 起始位置用padding代表
-            pad_token_id = self.config.pad_token_id
             # label padding位为-100, decoder_input_ids需要将-100替换为0
-            decoder_input_ids.masked_fill_(decoder_input_ids==-100, pad_token_id)
+            decoder_input_ids.masked_fill_(decoder_input_ids==-100, self.config.pad_token_id)
             
         # decoder
         dec_output:T5StackOutput = self.decoder(
             input_ids = decoder_input_ids, 
-            attention_mask = decoder_attention_mask,
+            attention_mask = None, # 后续生成下三角矩阵
             encoder_hidden_states = enc_output.last_hidden_state,
             encoder_attention_mask = attention_mask,
             start_pos = start_pos

@@ -71,7 +71,3 @@ class FFN(nn.Module):
             xx = self.ff(x)
             return self.layer_norm(self.dropout(xx) + x)
         
-
-
-
-

@@ -6,7 +6,7 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from nlpcol.activations import get_activation
-from nlpcol.layers.attention import Attention, AttentionOutput
+from nlpcol.layers.attention import EncAttention, AttentionOutput
 from nlpcol.layers.ffn import FFN
 from nlpcol.layers.layer import LayerNorm
 from torch import Size, Tensor
@@ -121,13 +121,13 @@ class BertLayer(nn.Module):
     """
     def __init__(self, config: Config):
         super().__init__()
-        self.multi_head_attention = Attention(config)
+        self.self_attention = EncAttention(config)
         self.attention_output = AttentionOutput(config)
         self.ffn = FFN(config)
     
     def forward(self, hidden_states:Tensor, attention_mask:Tensor) -> Tensor:
         # self attention
-        context_layer = self.multi_head_attention(
+        context_layer = self.self_attention(
             hidden_states, hidden_states, hidden_states, attention_mask 
         )
         attention_output = self.attention_output(context_layer, hidden_states)
@@ -168,7 +168,7 @@ class BertPool(nn.Module):
     def __init__(self, config: Config):
         super().__init__()
         self.dense = nn.Linear(config.d_model, config.d_model)
-        self.activation = nn.Tanh()
+        self.act = nn.Tanh()
 
     def forward(self, hidden_states: Tensor) -> Tensor:
         """
@@ -176,7 +176,7 @@ class BertPool(nn.Module):
         """
         first_token_tensor = hidden_states[:, 0] # 获取第一个每行的token btz*hidden_size
         pool_output = self.dense(first_token_tensor)
-        pool_output = self.activation(pool_output)
+        pool_output = self.act(pool_output)
         return pool_output
 
 
@@ -185,21 +185,19 @@ class BertMLM(nn.Module):
     def __init__(self, config: Config):
         super().__init__()
         self.dense = nn.Linear(config.d_model, config.d_model)
-        self.transform_act_fn = get_activation(config.hidden_act)
+        self.act = get_activation(config.hidden_act)
         self.layer_norm = LayerNorm(config.d_model, eps=config.layer_norm_eps)
 
-        self.decoder = nn.Linear(config.d_model, config.vocab_size, bias=False)
-        self.decoder.bias = nn.Parameter(torch.zeros(config.vocab_size))
+        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
+        self.lm_head.bias = nn.Parameter(torch.zeros(config.vocab_size))
         # self.decoder.bias = self.bias
 
     def forward(self, hidden_states: Tensor) -> Tensor:
         """
         hidden_states (Tensor): BertEncoder.last_hidden_state
         """
-        hidden_states = self.dense(hidden_states)
-        hidden_states = self.transform_act_fn(hidden_states)
-        hidden_states = self.layer_norm(hidden_states)
-        hidden_states = self.decoder(hidden_states)
+        hidden_states = self.layer_norm(self.act(self.dense(hidden_states)))
+        hidden_states = self.lm_head(hidden_states)
         return hidden_states
 
 class BertNsp(nn.Module):
@@ -236,7 +234,7 @@ class BertModel(BaseModel):
         self.with_nsp = with_nsp
         self.with_mlm = with_mlm
 
-        self.embeddings = BertEmbeddings(config)
+        self.embed = BertEmbeddings(config)
         self.encoder = BertEncoder(config)
         
         if self.with_pool:
@@ -248,6 +246,12 @@ class BertModel(BaseModel):
         if self.with_mlm:
             self.mlm = BertMLM(config)
 
+        self.tie_weights()
+
+    def get_output_embeddings(self):
+        # tie_weights用
+        if self.with_mlm:
+            return self.mlm.lm_head
 
     def forward(
         self,
@@ -261,7 +265,7 @@ class BertModel(BaseModel):
             # 非padding部分为1, padding部分为0
             attention_mask = (input_ids != self.config.pad_token_id).long() # bert默认0为mask_value
 
-        input_embedding = self.embeddings(input_ids, token_type_ids, position_ids)
+        input_embedding = self.embed(input_ids, token_type_ids, position_ids)
         encoder_output:BertEncoderOutput = self.encoder(input_embedding, attention_mask)
         hidden_states = encoder_output.last_hidden_state
         pooled_output, nsp_scores, mlm_scores = None, None, None
@@ -289,11 +293,11 @@ class BertModel(BaseModel):
         """
         prefix = 'bert'
         mapping = {
-            'embeddings.token_embeddings.weight':  f'{prefix}.embeddings.word_embeddings.weight',
-            'embeddings.position_embeddings.weight':  f'{prefix}.embeddings.position_embeddings.weight',
-            'embeddings.token_type_embeddings.weight':  f'{prefix}.embeddings.token_type_embeddings.weight',
-            'embeddings.layer_norm.weight':  f'{prefix}.embeddings.LayerNorm.gamma',
-            'embeddings.layer_norm.bias':  f'{prefix}.embeddings.LayerNorm.beta',
+            'embed.token_embeddings.weight':  f'{prefix}.embeddings.word_embeddings.weight',
+            'embed.position_embeddings.weight':  f'{prefix}.embeddings.position_embeddings.weight',
+            'embed.token_type_embeddings.weight':  f'{prefix}.embeddings.token_type_embeddings.weight',
+            'embed.layer_norm.weight':  f'{prefix}.embeddings.LayerNorm.gamma',
+            'embed.layer_norm.bias':  f'{prefix}.embeddings.LayerNorm.beta',
             'pooler.dense.weight': f'{prefix}.pooler.dense.weight',
             'pooler.dense.bias': f'{prefix}.pooler.dense.bias',
             'nsp.seq_relationship.weight': 'cls.seq_relationship.weight',
@@ -303,8 +307,8 @@ class BertModel(BaseModel):
             'mlm.layer_norm.weight': 'cls.predictions.transform.LayerNorm.gamma',
             'mlm.layer_norm.bias': 'cls.predictions.transform.LayerNorm.beta',
             'mlm.bias': 'cls.predictions.bias',
-            'mlm.decoder.weight': 'cls.predictions.decoder.weight',
-            'mlm.decoder.bias': 'cls.predictions.bias'
+            'mlm.lm_head.weight': 'cls.predictions.decoder.weight',
+            'mlm.lm_head.bias': 'cls.predictions.bias'
         }
 
         for i in range(self.config.num_layers):
@@ -312,12 +316,12 @@ class BertModel(BaseModel):
 
             mapping.update(
                 {
-                    f"encoder.layers.{i}.multi_head_attention.q.weight": prefix_i + 'attention.self.query.weight',
-                    f"encoder.layers.{i}.multi_head_attention.q.bias": prefix_i + 'attention.self.query.bias',
-                    f"encoder.layers.{i}.multi_head_attention.k.weight": prefix_i + 'attention.self.key.weight',
-                    f"encoder.layers.{i}.multi_head_attention.k.bias": prefix_i + 'attention.self.key.bias',
-                    f"encoder.layers.{i}.multi_head_attention.v.weight": prefix_i + 'attention.self.value.weight',
-                    f"encoder.layers.{i}.multi_head_attention.v.bias": prefix_i + 'attention.self.value.bias',
+                    f"encoder.layers.{i}.self_attention.q.weight": prefix_i + 'attention.self.query.weight',
+                    f"encoder.layers.{i}.self_attention.q.bias": prefix_i + 'attention.self.query.bias',
+                    f"encoder.layers.{i}.self_attention.k.weight": prefix_i + 'attention.self.key.weight',
+                    f"encoder.layers.{i}.self_attention.k.bias": prefix_i + 'attention.self.key.bias',
+                    f"encoder.layers.{i}.self_attention.v.weight": prefix_i + 'attention.self.value.weight',
+                    f"encoder.layers.{i}.self_attention.v.bias": prefix_i + 'attention.self.value.bias',
                     f"encoder.layers.{i}.attention_output.o.weight": prefix_i + 'attention.output.dense.weight',
                     f"encoder.layers.{i}.attention_output.o.bias": prefix_i + 'attention.output.dense.bias',
                     f"encoder.layers.{i}.attention_output.layer_norm.weight": prefix_i + 'attention.output.LayerNorm.gamma',

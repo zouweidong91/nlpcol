@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Size, Tensor
-from nlpcol.models import BertModel, BaseModel, T5Model
+from nlpcol.models import BertModel, BaseModel, T5Model, GptModel
 
 
 def load_config(config_path) -> dict:
@@ -29,6 +29,7 @@ def build_transformer_model(checkpoint_path:str=None, config_path:str=None, mode
     models = {
         "bert": BertModel,
         "t5": T5Model,
+        "GPT": GptModel,
     }
 
     MODEL = models[model]

@@ -19,9 +19,9 @@ class BaseConfig:
 
     dropout_rate: float
     initializer_range: float # 权重初始化标准差值
-    layer_norm_eps: float
-    hidden_act: str
-    
+    layer_norm_eps: float # 很小的正数，确保不会出现除以零
+    hidden_act: str # 激活函数
+
     eos_token_id: int
     bos_token_id: int # bos_token_id 默认为 pad_token_id
     pad_token_id: int
@@ -33,7 +33,8 @@ class BaseConfig:
 
     # 其他额外的默认配置
     use_bias: bool = True # nn.liner是否使用偏置  e.g. t5不使用
-    layer_norm_type:str = 'post' # [pre, post] 是否在atten操作之前归一化
+    layer_norm_type: str = 'post' # [pre, post] 是否在atten操作之前归一化
+    tie_word_embeddings: bool = True # token_embeddings和lm_head权重共享
     
 
 
@@ -76,10 +77,18 @@ class BaseModel(nn.Module, GenerationMixin):
         elif isinstance(module, RMSNorm):
             module.weight.data.fill_(self.config.initializer_range)
 
+    def parameter_spilt_or_transpose(self, state_dict: dict) -> dict:
+        """
+        1、部分transformers模型如gpt, qkv在一个参数矩阵中，需要split
+        2、gpt实现时Conv1d和标准nn.Linear输入输出位置相反，需要对weight转置
+        """
+        return state_dict
 
     def load_weight(self, checkpoint_path):
         """加载checkpoint_path参数"""
         state_dict:dict = torch.load(checkpoint_path, map_location='cpu')
+        state_dict = self.parameter_spilt_or_transpose(state_dict)
+
         state_dict_new = {}
         mapping = self.variable_mapping()
 
@@ -113,7 +122,7 @@ class BaseModel(nn.Module, GenerationMixin):
         name为原始模型的参数名
         """
         variable = state_dict.pop(name)
-        if name in [
+        if name in [  # TODO gpt 在下游模型中各自继承
             'encoder.embed_tokens.weight',
             'decoder.embed_tokens.weight',
             'lm_head.weight',
@@ -122,13 +131,30 @@ class BaseModel(nn.Module, GenerationMixin):
         
         return variable
 
-
     def load_embedding(self, embeddings):
         """根据keep_tokens对embedding进行修改"""
         if self.keep_tokens is not None:
             embeddings = embeddings[self.keep_tokens]
         return embeddings
 
+
+    def tie_weights(self):
+        """token_embeddings和lm_head权重共享
+        Tie the weights between the input embeddings and the output embeddings.
+        # TODO enc dec weight tie
+        """
+        input_embeddings = self.get_input_embeddings()
+        output_embeddings = self.get_output_embeddings()
+        if output_embeddings is None: return
+
+        if self.config.tie_word_embeddings: 
+            output_embeddings.weight = input_embeddings.weight
+
+    def get_input_embeddings(self) -> nn.Embedding:
+        return self.embed.token_embeddings
+
+    def get_output_embeddings(self) -> nn.Linear:
+        return self.lm_head
 
     @torch.no_grad()
     def predict(self, X:list):
