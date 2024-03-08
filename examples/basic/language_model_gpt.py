@@ -3,15 +3,16 @@
 
 import torch
 import torch.nn as nn
+from nlpcol.config import device
 from nlpcol.model import build_transformer_model
 from nlpcol.models.bert import BertModel, BertOutput
+from nlpcol.models.gpt import GptModel
 from nlpcol.tokenizers import Tokenizer
 from nlpcol.utils.snippets import model_parameter_diff, seed_everything
-from nlpcol.config import device
 
 seed_everything(42)
 
-from transformers import OpenAIGPTTokenizer, OpenAIGPTLMHeadModel
+from transformers import OpenAIGPTLMHeadModel, OpenAIGPTTokenizer
 
 model_path = "/home/dataset/pretrain_ckpt/gpt/openai-gpt/"
 vocab_path = model_path + "/vocab.txt"
@@ -22,7 +23,8 @@ checkpoint_path = model_path + '/pytorch_model.bin'
 # tokenizer = Tokenizer(vocab_path, do_lower_case=True)
 tokenizer = OpenAIGPTTokenizer.from_pretrained(model_path)
 
-model = build_transformer_model(checkpoint_path, config_path=config_path, model='GPT')  # 建立模型，加载权重
+model:GptModel = build_transformer_model(checkpoint_path, config_path=config_path, model='GPT')  # 建立模型，加载权重
+model.eval() # 关掉nn.dropout model.training=False
 model.to(device)
 
 # model_parameter_diff(
@@ -43,7 +45,7 @@ def get_loss():
     
     # 准备数据时label做处理
     # 北 京 在 哪 里 在 中 国 </s>      input_ids
-    # 哈 哈 哈 哈 哈 在 中 国 </s>      labels
+    # 哈 哈 哈 哈 哈 在 中 国 </s>      labels  哈为-100
 
     # 模型内部做shift right
     # 北 京 在 哪 里 在 中 国 </s>      原句
@@ -71,6 +73,8 @@ def get_loss():
 
 def generate():
     input_ids = tokenizer("My name is Julien and I like to", return_tensors="pt").input_ids.to(device)
+    # input_ids = input_ids.repeat(2, 1)
+    print(input_ids)
 
     # generate answer  greed search
     logits = model.generate(input_ids = input_ids, max_length=32, num_beams=1)
@@ -79,6 +83,6 @@ def generate():
     # ['my name is julien and i like to think that i am a very good person. i am a very good person. i am a very good person. i']
 
 get_loss()
-# generate()
+generate()
 
 

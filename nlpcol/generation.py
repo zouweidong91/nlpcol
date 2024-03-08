@@ -1,17 +1,33 @@
-from typing import Optional, Union, List, Tuple
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import torch
 from torch import Size, Tensor
 
+if TYPE_CHECKING:
+    from nlpcol.models.base import BaseConfig as Config
+    from nlpcol.models.gpt import CausalLMOutput
+    from nlpcol.models.t5 import Seq2SeqLMOutput
+
+
 
 class GenerationMixin:
     """generation混入类"""
+    config: Config
 
-    def get_encoder_output(self, input_ids: torch.LongTensor) -> Tensor:
-        """获取enc端的输出"""
-        attention_mask = (input_ids != self.config.pad_token_id).long()
-        enc_output = self.encoder(input_ids, attention_mask)
-        return enc_output
+    def init_decoder_input_ids(self, input_ids: torch.Tensor):
+        """初始化decoder_input_ids"""
+
+    def prepare_inputs_for_generation(self):
+        pass
+
+    def _update_model_kwargs_for_generation(self, model_kwargs:dict) -> dict:
+        """更新model_kwargs字典，为下一个step做准备"""
+
+    def get_max_decoder_len(self, input_ids, kwargs):
+        """获取最大解码长度"""
+        return kwargs['max_length']
         
     @torch.inference_mode()
     def generate(
@@ -30,48 +46,39 @@ class GenerationMixin:
 
         batch_size = input_ids.shape[0]
         device = input_ids.device
-        eos_token_id_tensor = torch.tensor([self.config.eos_token_id]).to(device)
-        max_length = kwargs['max_length']
-
-        enc_output = self.get_encoder_output(input_ids)
-        decoder_input_ids = torch.ones((batch_size, 1), dtype=torch.long, device=device) * self.config.bos_token_id
+        decoder_input_ids = self.init_decoder_input_ids(input_ids)
+        max_decoder_len = self.get_max_decoder_len(input_ids, kwargs)
         unfinished_sequences = torch.ones(batch_size, dtype=torch.long, device=device)
 
-        for step in range(max_length):
-            # 获取dec端的输出
-            input_ids = self.prepare_inputs_for_generation(decoder_input_ids)
+        model_kwargs = {}
+        model_kwargs['decoder_input_ids'] = decoder_input_ids
 
-            outputs = self(
-                decoder_input_ids=input_ids,
-                encoder_outputs=enc_output.last_hidden_state,
-                attention_mask=enc_output.attention_mask,
-                start_pos = step
-            )
-            next_token_logits = outputs.lm_logits[:, -1, :] # 去最后一步的预测结果 (batch_size, vocab_size)
-            next_tokens = getattr(self, mode)(next_token_logits, *args, **kwargs) # (batch_size)
+        for step in range(max_decoder_len):
+            model_inputs:dict = self.prepare_inputs_for_generation(step, input_ids, **model_kwargs)
+            outputs = self(**model_inputs)    # 获取dec端的输出
 
-            #  已经完成的序列，next_tokens强制设置为pad_token_id
-            next_tokens = next_tokens * unfinished_sequences + self.config.pad_token_id * (1 - unfinished_sequences)
+            next_token_logits = outputs.lm_logits[:, -1, :] # 去最后一步的预测结果 (bs, vocab_size)
+            next_tokens = getattr(self, mode)(next_token_logits, *args, **kwargs) # (bs)
+
+            # 已经完成的序列，next_tokens强制设置为pad_token_id
+            if self.config.pad_token_id is not None:
+                # e.g. [8467, 8467] * [1, 1] + 0 * (1 - [1, 1])
+                next_tokens = next_tokens * unfinished_sequences + self.config.pad_token_id * (1 - unfinished_sequences)
 
             decoder_input_ids = torch.cat([decoder_input_ids, next_tokens[:, None]], dim=-1) # next_tokens.unsqueeze(1)
+            model_kwargs = self._update_model_kwargs_for_generation(outputs, decoder_input_ids, model_kwargs)
 
             # 当一个序列遇到eos_token_id时，设置为结束 
-            # eos_token_id_tensor是为了兼容eos不唯一的情况
             # 这里已经完成的序列依然会继续进行计算，所以存在计算资源浪费的情况，kv_cache下，每次只计算一个token，所以影响并不大
-            unfinished_sequences = unfinished_sequences.mul(
-                    next_tokens.tile(eos_token_id_tensor.shape[0], 1).ne(eos_token_id_tensor.unsqueeze(1)).prod(dim=0)
-                )
+            # e.g. sum(tensor([8467, 8467]) != i for i in [1]) --> tensor([1, 1])
+            if self.config.eos_token_id is not None:
+                unfinished_sequences = unfinished_sequences.mul((sum(next_tokens != i for i in [self.config.eos_token_id])).long())
 
-            # 当一个batch内每条数据都遇到eos_token_id时，推理结束
-            if unfinished_sequences.max() == 0:
-                break
+                # 当一个batch内每条数据都遇到eos_token_id时，推理结束
+                if unfinished_sequences.max() == 0:
+                    break
 
         return decoder_input_ids
-        
-
-    def prepare_inputs_for_generation(self, input_ids: Tensor) -> Tensor:
-        """用kv_cache时，只需要取当前时刻的token_id即可"""
-        return input_ids[:, -1:]
 
 
     def greedy_search(self, scores: Tensor, *args, **kwargs) -> Tensor:
@@ -125,12 +132,13 @@ class GenerationMixin:
         batch_size = input_ids.shape[0]
         device = input_ids.device
         batch_beam_size = batch_size * num_beams
-        max_length = kwargs['max_length']
 
         # 对input_ids张量进行扩展
         input_ids = input_ids.repeat_interleave(num_beams, dim=0)  # (batch_size*num_beams, seq_len)  [0 0 1 1 2 2]
-        enc_output = self.get_encoder_output(input_ids)
-        decoder_input_ids = torch.ones((batch_beam_size, 1), dtype=torch.long, device=device) * self.config.bos_token_id  # (batch_size*num_beams, 1)
+        decoder_input_ids = self.init_decoder_input_ids(input_ids)
+        max_decoder_len = self.get_max_decoder_len(input_ids, kwargs)
+        model_kwargs = {}
+        model_kwargs['decoder_input_ids'] = decoder_input_ids
 
         beam_scorer = BeamSearchScorer(
             batch_size=batch_size,
@@ -146,16 +154,9 @@ class GenerationMixin:
         beam_scores[:, 1:] = -1e9
         beam_scores = beam_scores.view((batch_size * num_beams,)) # (batch_size * num_beams)
 
-        for step in range(max_length):
-            # 获取dec端的输出
-            input_ids = self.prepare_inputs_for_generation(decoder_input_ids)
-
-            outputs = self(
-                decoder_input_ids=input_ids,
-                encoder_outputs=enc_output.last_hidden_state,
-                attention_mask=enc_output.attention_mask,
-                start_pos = step
-            )
+        for step in range(max_decoder_len):
+            model_inputs:dict = self.prepare_inputs_for_generation(input_ids, **model_kwargs)
+            outputs = self(**model_inputs, start_pos = step)    # 获取dec端的输出
 
             next_token_logits:torch.Tensor = outputs.lm_logits[:, -1, :]
             next_token_scores = next_token_logits.log_softmax(dim=-1)  # (batch_size * num_beams, vocab_size)
@@ -189,6 +190,7 @@ class GenerationMixin:
 
             # 更新最优路径 (batch_size*num_beams, cur_len)
             decoder_input_ids = torch.cat([decoder_input_ids[beam_idx, :], beam_next_tokens.unsqueeze(-1)], dim=-1)
+            model_kwargs = self._update_model_kwargs_for_generation(outputs, decoder_input_ids, model_kwargs)
 
             if beam_scorer.is_done:
                 break
@@ -196,7 +198,7 @@ class GenerationMixin:
         sequence_outputs = beam_scorer.finalize(
             input_ids,
             beam_scores,
-            max_length=self.config.max_seq_length,
+            max_length=max_decoder_len,
             pad_token_id=self.config.pad_token_id,
             eos_token_id=self.config.eos_token_id,
         )
@@ -206,7 +208,86 @@ class GenerationMixin:
 
     def stream_generate(self):
         """stream输出预测的结果  单条数据"""
+
+# TODO 转移至model下
+class EncDecGenerationMixin(GenerationMixin):
+
+    def init_decoder_input_ids(self, input_ids: torch.Tensor):
+        """起始decoder_input_ids"""
+        return torch.ones((input_ids.shape[0], 1), dtype=torch.long, device=input_ids.device) * self.config.bos_token_id        # (bs, 1)
+
+    def prepare_inputs_for_generation(
+        self,
+        step: int,
+        input_ids: torch.Tensor = None,
+        decoder_input_ids = None,
+        encoder_outputs = None,
+        attention_mask = None,
+        **kwargs
+    ) -> dict:
+        """用kv_cache时，只需要取当前时刻的token_id即可 enc-dec"""
+        decoder_input_ids = decoder_input_ids[:, -1:]
         
+        return {
+            "input_ids": input_ids,
+            "start_pos": step,
+            "decoder_input_ids": decoder_input_ids,
+            "encoder_outputs": encoder_outputs,
+            "attention_mask": attention_mask,
+        }
+
+    def _update_model_kwargs_for_generation(
+            self,
+            outputs: Seq2SeqLMOutput,
+            decoder_input_ids,
+            model_kwargs
+    ) -> dict:
+        model_kwargs['decoder_input_ids'] = decoder_input_ids
+        model_kwargs['encoder_outputs'] = outputs.encoder_last_hidden_state
+        model_kwargs['attention_mask'] = outputs.encoder_attention_mask
+        return model_kwargs
+
+
+class DecGenerationMixin(GenerationMixin):
+
+    def init_decoder_input_ids(self, input_ids: torch.Tensor):
+        """起始decoder_input_ids"""
+        return input_ids
+
+    def get_max_decoder_len(self, input_ids, kwargs) -> int:
+        min_input_len = min(len(t) for t in input_ids)
+        max_decoder_len = kwargs['max_length'] - min_input_len
+        return max_decoder_len
+        
+    def prepare_inputs_for_generation(
+        self,
+        step: int,
+        input_ids: torch.Tensor = None,
+        decoder_input_ids = None,
+        is_first_forward: bool = True,
+        **kwargs
+    ) -> dict:
+        """用kv_cache时，只需要取当前时刻的token_id即可"""
+        if not is_first_forward:
+            min_input_len = min(len(t) for t in input_ids)
+            step += min_input_len-1
+            decoder_input_ids = decoder_input_ids[:, -1:]
+
+        return {
+            "input_ids": decoder_input_ids,
+            "start_pos": step,
+        }
+
+    def _update_model_kwargs_for_generation(
+            self,
+            outputs: CausalLMOutput,
+            decoder_input_ids,
+            model_kwargs
+    ) -> dict:
+        model_kwargs['decoder_input_ids'] = decoder_input_ids
+        model_kwargs['is_first_forward'] = False
+        return model_kwargs
+
 
 
 class BeamSearchScorer:

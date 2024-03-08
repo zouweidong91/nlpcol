@@ -6,12 +6,14 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from nlpcol.activations import get_activation
-from nlpcol.layers.attention import EncAttention, AttentionOutput
+from nlpcol.layers.attention import AttentionOutput, EncAttention
 from nlpcol.layers.ffn import FFN
 from nlpcol.layers.layer import LayerNorm
 from torch import Size, Tensor
 
 from .base import BaseConfig, BaseModel
+
+# TODO bert mask机制
 
 # config.json
 """

@@ -3,9 +3,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch import Size, Tensor
-from nlpcol.layers.layer import LayerNorm, RMSNorm
 from nlpcol.generation import GenerationMixin
+from nlpcol.layers.layer import LayerNorm, RMSNorm
+from torch import Size, Tensor
 
 
 class BaseConfig:
@@ -39,7 +39,7 @@ class BaseConfig:
 
 
 
-class BaseModel(nn.Module, GenerationMixin):
+class BaseModel(nn.Module):
     def __init__(self, config: dict, **kwargs):
         super().__init__()
         self.skip_init = kwargs.get('skip_init', False) # 是否跳过初始化 TODO 待删除

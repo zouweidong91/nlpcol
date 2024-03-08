@@ -9,6 +9,7 @@ from nlpcol.layers.layer import LayerNorm
 from nlpcol.models.base import BaseConfig as Config
 from torch import Size, Tensor
 
+
 # encoder 模型
 class EncAttention(nn.Module):
     def __init__(self, config: Config):
@@ -130,8 +131,9 @@ class DecAttention(EncAttention):
     def project(self, query:Tensor, key:Tensor, value:Tensor, start_pos:int):
         # 推理阶段，使用kv_cache
         # decoder-selfAtten:
-        #     推理时seq_length=1
+        #     推理时seq_length=1  
         bsz, q_len, _ = query.shape
+        # print(start_pos + q_len)
         self.cache_k[:bsz, start_pos : start_pos + q_len] = self.k(key)
         self.cache_v[:bsz, start_pos : start_pos + q_len] = self.v(value)
         keys = self.cache_k[:bsz, : start_pos + q_len]

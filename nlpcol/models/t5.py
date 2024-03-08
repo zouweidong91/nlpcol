@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from nlpcol.activations import get_activation
+from nlpcol.generation import EncDecGenerationMixin
 from nlpcol.layers.attention import AttentionOutput, EncDecAttention
 from nlpcol.layers.ffn import FFN, DenseGatedActDense
 from nlpcol.layers.layer import RMSNorm
@@ -301,7 +302,7 @@ class Seq2SeqLMOutput:
     decoder_hidden_states: Optional[List[torch.FloatTensor]] = None
 
 
-class T5Model(BaseModel):
+class T5Model(BaseModel, EncDecGenerationMixin):
     def __init__(self, config: Config, **kwargs):
         super().__init__(config, **kwargs)
         self.config = config = Config(**config)

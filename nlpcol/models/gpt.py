@@ -5,6 +5,7 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from nlpcol.generation import DecGenerationMixin
 from nlpcol.layers.attention import AttentionOutput, DecAttention
 from nlpcol.layers.ffn import FFN
 from torch import Size, Tensor
@@ -97,6 +98,7 @@ class GptEmbeddings(nn.Module):
         self,
         input_ids: Optional[torch.LongTensor],
         position_ids: Optional[torch.LongTensor] = None,
+        start_pos:int=0 # 解码时使用
     ) -> Tensor:
 
         device = input_ids.device
@@ -105,7 +107,8 @@ class GptEmbeddings(nn.Module):
         inputs_embeddings = self.token_embeddings(input_ids)
 
         if position_ids is None:
-            position_ids = torch.arange(seq_len, dtype=torch.long, device=device).unsqueeze(0).expand(btz, -1)
+            position_ids = torch.arange(start_pos+seq_len, dtype=torch.long, device=device).unsqueeze(0).expand(btz, -1)
+            position_ids = position_ids[:, start_pos : start_pos+seq_len] # 解码时位置编码也要根据输入长度截取
         position_embeddings = self.position_embeddings(position_ids)
 
         # 统一embedding写法 后续模型继承
@@ -153,7 +156,7 @@ class GptStackOutput:
 
 
 class GptStack(nn.Module):
-    def __init__(self, config: Config, embed:nn.Embedding):
+    def __init__(self, config: Config, embed:GptEmbeddings):
         super().__init__()
         self.embed = embed
         self.layers = nn.ModuleList([GptLayer(config) for _ in range(config.num_layers)])
@@ -164,7 +167,7 @@ class GptStack(nn.Module):
         attention_mask:Tensor=None,
         start_pos:int=0
     ) -> Tensor:
-        hidden_states = self.embed(input_ids)
+        hidden_states = self.embed(input_ids, start_pos=start_pos)
         all_hidden_states = []
 
         for i, layer_module in enumerate(self.layers):
@@ -185,11 +188,11 @@ class GptStack(nn.Module):
 
 
 @dataclass
-class Seq2SeqLMOutput:
+class CausalLMOutput:
     loss: torch.FloatTensor = None
     lm_logits: torch.FloatTensor = None
-    decoder_last_hidden_state: torch.FloatTensor= None
-    decoder_hidden_states: Optional[List[torch.FloatTensor]] = None
+    last_hidden_state: torch.FloatTensor= None
+    hidden_states: Optional[List[torch.FloatTensor]] = None
 
 
 """
@@ -199,7 +202,7 @@ class Seq2SeqLMOutput:
         weights instead.
 """
 
-class GptModel(BaseModel):
+class GptModel(BaseModel, DecGenerationMixin):
     def __init__(self, config: Config, **kwargs):
         super().__init__(config, **kwargs)
         self.config = config = Config(**config)
@@ -234,11 +237,11 @@ class GptModel(BaseModel):
             loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
             loss = loss_fn(shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
         
-        return Seq2SeqLMOutput(
+        return CausalLMOutput(
             loss = loss,
             lm_logits = lm_logits,
-            decoder_last_hidden_state = dec_output.last_hidden_state,
-            decoder_hidden_states = dec_output.hidden_states,
+            last_hidden_state = dec_output.last_hidden_state,
+            hidden_states = dec_output.hidden_states,
         )
 
     def parameter_spilt_or_transpose(self, state_dict: dict) -> dict:
