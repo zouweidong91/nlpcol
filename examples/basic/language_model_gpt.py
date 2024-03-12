@@ -4,11 +4,13 @@
 import torch
 import torch.nn as nn
 from nlpcol.config import device
+from nlpcol.generation import DecGenerationMixin
 from nlpcol.model import build_transformer_model
 from nlpcol.models.bert import BertModel, BertOutput
 from nlpcol.models.gpt import GptModel
 from nlpcol.tokenizers import Tokenizer
 from nlpcol.utils.snippets import model_parameter_diff, seed_everything
+from torch.nn.utils.rnn import pad_sequence
 
 seed_everything(42)
 
@@ -73,7 +75,9 @@ def get_loss():
 
 def generate():
     input_ids = tokenizer("My name is Julien and I like to", return_tensors="pt").input_ids.to(device)
+    input_ids_2 = tokenizer("My name is Julien and I", return_tensors="pt").input_ids.to(device)
     # input_ids = input_ids.repeat(2, 1)
+    input_ids = pad_sequence([input_ids.squeeze(), input_ids_2.squeeze()], batch_first=True, padding_value=DecGenerationMixin.PADDING_ID)   # (bsz, max_len)
     print(input_ids)
 
     # generate answer  greed search

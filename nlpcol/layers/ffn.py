@@ -45,8 +45,8 @@ class DenseGatedActDense(nn.Module):
 
 class FFN(nn.Module):
     """
-    pre_norm顺序为： LayerNorm --> Drop --> Add
-    post_norm顺序为： Drop --> Add --> LayerNorm
+    pre_norm顺序为： LayerNorm --> ff --> Drop --> Add
+    post_norm顺序为：ff --> Drop --> Add --> LayerNorm
     """
     def __init__(self, config: Config):
         super().__init__()

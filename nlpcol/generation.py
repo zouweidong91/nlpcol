@@ -25,10 +25,14 @@ class GenerationMixin:
     def _update_model_kwargs_for_generation(self, model_kwargs:dict) -> dict:
         """更新model_kwargs字典，为下一个step做准备"""
 
-    def get_max_decoder_len(self, input_ids, kwargs):
+    def get_max_decoder_len(self, max_length):
         """获取最大解码长度"""
-        return kwargs['max_length']
-        
+        return max_length
+
+    def update_next_tokens(self, next_tokens, *args):
+        """更新next_tokens"""
+        return next_tokens
+                
     @torch.inference_mode()
     def generate(
         self, 
@@ -46,8 +50,9 @@ class GenerationMixin:
 
         batch_size = input_ids.shape[0]
         device = input_ids.device
+        max_length = kwargs['max_length']
         decoder_input_ids = self.init_decoder_input_ids(input_ids)
-        max_decoder_len = self.get_max_decoder_len(input_ids, kwargs)
+        max_decoder_len = self.get_max_decoder_len(max_length)
         unfinished_sequences = torch.ones(batch_size, dtype=torch.long, device=device)
 
         model_kwargs = {}
@@ -59,6 +64,7 @@ class GenerationMixin:
 
             next_token_logits = outputs.lm_logits[:, -1, :] # 去最后一步的预测结果 (bs, vocab_size)
             next_tokens = getattr(self, mode)(next_token_logits, *args, **kwargs) # (bs)
+            next_tokens = self.update_next_tokens(next_tokens, step)
 
             # 已经完成的序列，next_tokens强制设置为pad_token_id
             if self.config.pad_token_id is not None:
@@ -136,7 +142,7 @@ class GenerationMixin:
         # 对input_ids张量进行扩展
         input_ids = input_ids.repeat_interleave(num_beams, dim=0)  # (batch_size*num_beams, seq_len)  [0 0 1 1 2 2]
         decoder_input_ids = self.init_decoder_input_ids(input_ids)
-        max_decoder_len = self.get_max_decoder_len(input_ids, kwargs)
+        max_decoder_len = self.get_max_decoder_len(kwargs)
         model_kwargs = {}
         model_kwargs['decoder_input_ids'] = decoder_input_ids
 
@@ -249,16 +255,24 @@ class EncDecGenerationMixin(GenerationMixin):
 
 
 class DecGenerationMixin(GenerationMixin):
+    
+    PADDING_ID = -50  # decoder模型用。随机设置的，和padding_id区分开
 
     def init_decoder_input_ids(self, input_ids: torch.Tensor):
-        """起始decoder_input_ids"""
+        """起始decoder_input_ids  主要考虑batch内输入长度不一致的情况"""
+        self.input_ids = input_ids
+        self.input_mask = input_ids != self.DECODER_PADDING_ID
+        self.min_input_len:int = self.input_mask.sum(dim=-1).min().tolist()
+        self.max_input_len:int = self.input_mask.sum(dim=-1).max().tolist()
+
+        input_ids = input_ids[:, :self.min_input_len]
         return input_ids
 
-    def get_max_decoder_len(self, input_ids, kwargs) -> int:
-        min_input_len = min(len(t) for t in input_ids)
-        max_decoder_len = kwargs['max_length'] - min_input_len
+    def get_max_decoder_len(self, max_length) -> int:
+        # 获取原始的最短输入
+        max_decoder_len = max_length - self.min_input_len
         return max_decoder_len
-        
+
     def prepare_inputs_for_generation(
         self,
         step: int,
@@ -269,8 +283,7 @@ class DecGenerationMixin(GenerationMixin):
     ) -> dict:
         """用kv_cache时，只需要取当前时刻的token_id即可"""
         if not is_first_forward:
-            min_input_len = min(len(t) for t in input_ids)
-            step += min_input_len-1
+            step += self.min_input_len-1
             decoder_input_ids = decoder_input_ids[:, -1:]
 
         return {
@@ -287,6 +300,19 @@ class DecGenerationMixin(GenerationMixin):
         model_kwargs['decoder_input_ids'] = decoder_input_ids
         model_kwargs['is_first_forward'] = False
         return model_kwargs
+
+    def update_next_tokens(self, next_tokens, step):
+        """更新next_tokens"""
+        # 同一个batch，较长的input在解码前期用自身token
+        cur_pos = step+self.min_input_len
+        if cur_pos >= self.max_input_len:
+            return next_tokens
+
+        next_tokens = torch.where(
+            self.input_mask[:, cur_pos], self.input_ids[:, cur_pos], next_tokens
+        )
+        
+        return next_tokens
 
 
 
