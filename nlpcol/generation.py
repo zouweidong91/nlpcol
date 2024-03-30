@@ -256,12 +256,12 @@ class EncDecGenerationMixin(GenerationMixin):
 
 class DecGenerationMixin(GenerationMixin):
     
-    PADDING_ID = -50  # decoder模型用。随机设置的，和padding_id区分开
+    PADDING_ID = -50  # decoder模型用。随机设置的，和padding_id区分开 TODO 
 
     def init_decoder_input_ids(self, input_ids: torch.Tensor):
         """起始decoder_input_ids  主要考虑batch内输入长度不一致的情况"""
         self.input_ids = input_ids
-        self.input_mask = input_ids != self.DECODER_PADDING_ID
+        self.input_mask = input_ids != self.PADDING_ID
         self.min_input_len:int = self.input_mask.sum(dim=-1).min().tolist()
         self.max_input_len:int = self.input_mask.sum(dim=-1).max().tolist()
 

@@ -152,7 +152,7 @@ class BaseModel(nn.Module):
 
     def get_input_embeddings(self) -> nn.Embedding:
         return self.embed.token_embeddings
-
+ 
     def get_output_embeddings(self) -> nn.Linear:
         return self.lm_head
 

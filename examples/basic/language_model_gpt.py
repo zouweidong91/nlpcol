@@ -14,7 +14,7 @@ from torch.nn.utils.rnn import pad_sequence
 
 seed_everything(42)
 
-from transformers import OpenAIGPTLMHeadModel, OpenAIGPTTokenizer
+from nlpcol.tokenizers import Tokenizer
 
 model_path = "/home/dataset/pretrain_ckpt/gpt/openai-gpt/"
 vocab_path = model_path + "/vocab.txt"
@@ -22,8 +22,7 @@ config_path = model_path + "/config.json"
 checkpoint_path = model_path + '/pytorch_model.bin'
 
 # 建立分词器
-# tokenizer = Tokenizer(vocab_path, do_lower_case=True)
-tokenizer = OpenAIGPTTokenizer.from_pretrained(model_path)
+tokenizer = Tokenizer(model_path, tokenizer_type='bpe', token_start=None, token_end=None, token_unk=None)
 
 model:GptModel = build_transformer_model(checkpoint_path, config_path=config_path, model='GPT')  # 建立模型，加载权重
 model.eval() # 关掉nn.dropout model.training=False
@@ -38,7 +37,8 @@ model.to(device)
 # training
 def get_loss():
     # tokenize
-    tokens = tokenizer.tokenize("hello, my dog is cute.")
+    token_ids, _ = tokenizer.encode("hello, my dog is cute.")
+    tokens = tokenizer.ids_to_tokens(token_ids)
     print(tokens)
     # ['hello</w>', ',</w>', 'my</w>', 'dog</w>', 'is</w>', 'cute</w>', '.</w>']
 
@@ -54,7 +54,9 @@ def get_loss():
     # 北 京 在 哪 里 在 中 国           shift_logits
     # 哈 哈 哈 哈 在 中 国 </s>         labels  哈为-100
 
-    cat = tokenizer("hello, my dog is cute. i'm sorry, i didn't mean to make", return_tensors="pt").input_ids.to(device)
+    cat = tokenizer.encode("hello, my dog is cute. i'm sorry, i didn't mean to make")[0]
+    cat = torch.tensor([cat]).to(device)
+
     input_ids = cat.clone()
     labels = cat.clone()
     labels[:, :len(tokens)] = -100 # 真正ipt的位置不参与损失
@@ -74,15 +76,18 @@ def get_loss():
 
 
 def generate():
-    input_ids = tokenizer("My name is Julien and I like to", return_tensors="pt").input_ids.to(device)
-    input_ids_2 = tokenizer("My name is Julien and I", return_tensors="pt").input_ids.to(device)
-    # input_ids = input_ids.repeat(2, 1)
-    input_ids = pad_sequence([input_ids.squeeze(), input_ids_2.squeeze()], batch_first=True, padding_value=DecGenerationMixin.PADDING_ID)   # (bsz, max_len)
+    # input_ids = tokenizer.encode("My name is Julien and I like to")[0]
+    # input_ids_2 = tokenizer.encode("My name is Julien and I like to")[0]
+
+    input_ids= tokenizer.encode("My name is Julien and I like to")[0]
+    input_ids = torch.tensor([input_ids]).to(device)
+
+    # input_ids = pad_sequence([input_ids.squeeze(), input_ids_2.squeeze()], batch_first=True, padding_value=DecGenerationMixin.PADDING_ID)   # (bsz, max_len)
     print(input_ids)
 
     # generate answer  greed search
     logits = model.generate(input_ids = input_ids, max_length=32, num_beams=1)
-    predict_label = [tokenizer.decode(i,skip_special_tokens=True) for i in logits]
+    predict_label = [tokenizer.decode(i) for i in logits]
     print(predict_label)
     # ['my name is julien and i like to think that i am a very good person. i am a very good person. i am a very good person. i']
 
