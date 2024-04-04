@@ -16,6 +16,8 @@ class TokenizerBase(object):
         mask_token: mask标记
         pre_tokenize: 外部传入的分词函数，用作对文本进行预分词。如果传入pre_tokenize，则先执行pre_tokenize(text)，然后在它的基础上执行原本的tokenize函数；
         token_translate: 映射字典，主要用在tokenize之后，将某些特殊的token替换为对应的token。
+
+        不同模型，5个特殊token需要查看vocab文件分别传入。如果词表中不存在，则后续不设置相应token_id
         """
         self._token_pad = self.pad_token = token_pad
         self._token_unk = self.unk_token = token_unk

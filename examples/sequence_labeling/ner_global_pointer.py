@@ -32,10 +32,10 @@ seed_everything(42)
 # 基本训练参数
 train_config = TrainConfig(batch_size = 8, epochs = 10, max_seq_length=256)
 
-model_path = "/home/dataset/pretrain_ckpt/bert/chinese_L-12_H-768_A-12"
+model_path = "/home/dataset/pretrain_ckpt/bert/bert-base-chinese"
 vocab_path = model_path + "/vocab.txt"
 config_path = model_path + "/config.json"
-checkpoint_path = model_path + '/pytorch_model.bin.bfr_convert'
+checkpoint_path = model_path + '/pytorch_model.bin'
 
 
 # 建立分词器

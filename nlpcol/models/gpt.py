@@ -22,7 +22,7 @@ from .base import BaseConfig, BaseModel
 # GPT-2	2019 年 2 月	15 亿	    40GB
 # GPT-3	2020 年 5 月	1,750 亿	45TB
 # https://zhuanlan.zhihu.com/p/350017443 gpt系列介绍
-# 1. embedding是token、position二者embedding之和
+# 1. embedding是token、position、token_type(可选项)三者embedding之和
 # 2. embedding没有加LayerNormalization层
 
 
@@ -73,15 +73,17 @@ class Config(BaseConfig):
         self.dropout_rate: float = kwargs.get('dropout_rate', 0.1)
         self.initializer_range: float = kwargs.get('initializer_range')
         self.layer_norm_eps: float = kwargs.get('layer_norm_epsilon')
-
-        self.eos_token_id: int = kwargs.get('eos_token_id')
-        self.bos_token_id: int = kwargs.get('bos_token_id', 0) # bos_token_id 默认为 pad_token_id
+        
+        # 自身配置没有，从extra_config获取
         self.pad_token_id: int = kwargs.get('pad_token_id')
+        self.bos_token_id: int = kwargs.get('bos_token_id')
+        self.eos_token_id: int = kwargs.get('eos_token_id')
 
         self.max_position:int = kwargs.get('n_positions', 512)  # 位置编码用
         self.max_batch_size:int = kwargs.get('max_batch_size', 16)  # 推理过程中batch_size不能大于此值， kv_cache用
 
         self.hidden_act: str = kwargs.get('hidden_act', 'gelu_new') # gpt使用gelu_new
+        self.prefix: str = kwargs.get('prefix', '') # CDial-GPT相比gpt多了个transformer前缀
 
 
 # ？精简变量命名 TODO
@@ -97,6 +99,7 @@ class GptEmbeddings(nn.Module):
     def forward(
         self,
         input_ids: Optional[torch.LongTensor],
+        token_type_ids: Optional[torch.LongTensor],
         position_ids: Optional[torch.LongTensor] = None,
         start_pos:int=0 # 解码时使用
     ) -> Tensor:
@@ -114,8 +117,14 @@ class GptEmbeddings(nn.Module):
         # 统一embedding写法 后续模型继承
         # TODO token_type_ids is None   token_type_embedding = 0
         # ? 没有归一化
+        if token_type_ids is not None:
+            token_type_ids = token_type_ids.view(-1, token_type_ids.size(1))
+            token_type_embeddings = self.token_embeddings(token_type_ids)
+        else:
+            token_type_embeddings = 0
+            
 
-        embeddings = inputs_embeddings + position_embeddings
+        embeddings = inputs_embeddings + position_embeddings + token_type_embeddings
         embeddings = self.dropout(embeddings)
         return embeddings
         
@@ -164,10 +173,11 @@ class GptStack(nn.Module):
     def forward(
         self, 
         input_ids:Tensor, 
+        token_type_ids:Tensor, 
         attention_mask:Tensor=None,
         start_pos:int=0
     ) -> Tensor:
-        hidden_states = self.embed(input_ids, start_pos=start_pos)
+        hidden_states = self.embed(input_ids, token_type_ids, start_pos=start_pos)
         all_hidden_states = []
 
         for i, layer_module in enumerate(self.layers):
@@ -195,33 +205,28 @@ class CausalLMOutput:
     hidden_states: Optional[List[torch.FloatTensor]] = None
 
 
-"""
-        Tie the weights between the input embeddings and the output embeddings.
-
-        If the `torchscript` flag is set in the configuration, can't handle parameter sharing so we are cloning the
-        weights instead.
-"""
-
 class GptModel(BaseModel, DecGenerationMixin):
     def __init__(self, config: Config, **kwargs):
         super().__init__(config, **kwargs)
-        self.config = config = Config(**config)
-
+        self.config: Config
+        
         self.embed = GptEmbeddings(config)
         self.decoder = GptStack(config, self.embed)
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
-
+        
         self.tie_weights()
 
     def forward(
         self,
         input_ids:torch.LongTensor=None,
+        token_type_ids:torch.LongTensor=None,
         labels:torch.LongTensor=None,
         start_pos:int=0 # 训练状态下 start_pos=0
     ):  
         # decoder
         dec_output:GptStackOutput = self.decoder(
             input_ids = input_ids, 
+            token_type_ids = token_type_ids, 
             attention_mask = None,
             start_pos = start_pos
         )
@@ -245,12 +250,14 @@ class GptModel(BaseModel, DecGenerationMixin):
         )
 
     def parameter_spilt_or_transpose(self, state_dict: dict) -> dict:
+        prefix = self.config.prefix
+
         for i in range(self.config.num_layers):
             # new_key: old_ley
             # atten层切分+转置
             mapping = {
-                "decoder.layers.{}.self_attention.{}.weight": f"h.{i}.attn.c_attn.weight",
-                "decoder.layers.{}.self_attention.{}.bias": f"h.{i}.attn.c_attn.bias",
+                "decoder.layers.{}.self_attention.{}.weight": f"{prefix}h.{i}.attn.c_attn.weight",
+                "decoder.layers.{}.self_attention.{}.bias": f"{prefix}h.{i}.attn.c_attn.bias",
             }
             
             for new_key, old_key in mapping.items():
@@ -262,9 +269,9 @@ class GptModel(BaseModel, DecGenerationMixin):
             
             # 其他线性层转置
             mapping = {
-                f'decoder.layers.{i}.self_attention_output.o.weight': f'h.{i}.attn.c_proj.weight',  # atten_output 层
-                f'decoder.layers.{i}.ffn.ff.dense_1.weight': f'h.{i}.mlp.c_fc.weight',  # ffn 第一层
-                f'decoder.layers.{i}.ffn.ff.dense_2.weight': f'h.{i}.mlp.c_proj.weight'   # ffn 第二层
+                f'decoder.layers.{i}.self_attention_output.o.weight': f'{prefix}h.{i}.attn.c_proj.weight',  # atten_output 层
+                f'decoder.layers.{i}.ffn.ff.dense_1.weight': f'{prefix}h.{i}.mlp.c_fc.weight',  # ffn 第一层
+                f'decoder.layers.{i}.ffn.ff.dense_2.weight': f'{prefix}h.{i}.mlp.c_proj.weight'   # ffn 第二层
             }
             for new_key, old_key in mapping.items():
                 state_dict[new_key] = state_dict.pop(old_key).T
@@ -276,21 +283,23 @@ class GptModel(BaseModel, DecGenerationMixin):
         """
         不同代码参数命名不同，需要做参数映射   new_key: old_key
         """
+        prefix = self.config.prefix
+
         mapping = {
-            "embed.token_embeddings.weight": "tokens_embed.weight",
-            "embed.position_embeddings.weight": "positions_embed.weight",
+            "embed.token_embeddings.weight": f"{prefix}tokens_embed.weight",
+            "embed.position_embeddings.weight": f"{prefix}positions_embed.weight",
         }
 
         for i in range(self.config.num_layers):
             mapping.update( 
             {
-            f'decoder.layers.{i}.self_attention_output.o.bias': f'h.{i}.attn.c_proj.bias',
-            f'decoder.layers.{i}.self_attention_output.layer_norm.weight': f'h.{i}.ln_1.weight',
-            f'decoder.layers.{i}.self_attention_output.layer_norm.bias': f'h.{i}.ln_1.bias',
-            f'decoder.layers.{i}.ffn.ff.dense_1.bias': f'h.{i}.mlp.c_fc.bias',
-            f'decoder.layers.{i}.ffn.ff.dense_2.bias': f'h.{i}.mlp.c_proj.bias',
-            f'decoder.layers.{i}.ffn.layer_norm.weight': f'h.{i}.ln_2.weight',
-            f'decoder.layers.{i}.ffn.layer_norm.bias': f'h.{i}.ln_2.bias'
+            f'decoder.layers.{i}.self_attention_output.o.bias': f'{prefix}h.{i}.attn.c_proj.bias',
+            f'decoder.layers.{i}.self_attention_output.layer_norm.weight': f'{prefix}h.{i}.ln_1.weight',
+            f'decoder.layers.{i}.self_attention_output.layer_norm.bias': f'{prefix}h.{i}.ln_1.bias',
+            f'decoder.layers.{i}.ffn.ff.dense_1.bias': f'{prefix}h.{i}.mlp.c_fc.bias',
+            f'decoder.layers.{i}.ffn.ff.dense_2.bias': f'{prefix}h.{i}.mlp.c_proj.bias',
+            f'decoder.layers.{i}.ffn.layer_norm.weight': f'{prefix}h.{i}.ln_2.weight',
+            f'decoder.layers.{i}.ffn.layer_norm.bias': f'{prefix}h.{i}.ln_2.bias'
             })
         return mapping
         

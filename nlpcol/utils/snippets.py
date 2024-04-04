@@ -7,6 +7,7 @@ from typing import List, Union
 import numpy as np
 import sentencepiece as spm
 import torch
+from nlpcol.tokenizers.tokenizers import Tokenizer
 from nlpcol.utils._file import FileTool
 from torch import Size, Tensor
 from torch.nn.utils.rnn import pad_sequence
@@ -144,7 +145,7 @@ def model_parameter_diff(state_dict_1:dict, state_dict_2:dict=None):
 
 
 def sequence_padding(inputs, length=None, value=0, seq_dims=1, mode='post'):
-    """将序列padding到同一长度  TODO 
+    """将序列padding到同一长度  部分模型如CDial-GPT，pad_id为1，请注意修改value
     """
     if isinstance(inputs, (np.ndarray, list)):
         if length is None:
@@ -250,5 +251,23 @@ def get_pool_emb(outputs, attention_mask:Tensor, pool_strategy='cls'):
 
     else:
         raise NotImplementedError
+
+
+def get_special_token(tokenizer: Tokenizer) -> dict:
+    """从tokenizer获取三个token_id, 部分模型config.json文件没有配置
+
+    Args:
+        tokenizer (Tokenizer): 分词器
+
+    Returns:
+        dict: _description_
+    """
+    
+    return {
+        "pad_token_id": tokenizer.pad_token_id, 
+        "bos_token_id": tokenizer.start_token_id, 
+        "eos_token_id": tokenizer.end_token_id
+    }
+
 
 

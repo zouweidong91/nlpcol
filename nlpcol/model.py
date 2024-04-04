@@ -5,7 +5,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Size, Tensor
-from nlpcol.models import BertModel, BaseModel, T5Model, GptModel
+
+from nlpcol.models import (BaseConfig, BaseModel, BertConfig, BertModel,
+                           GptConfig, GptModel, T5Config, T5Model)
 
 
 def load_config(config_path) -> dict:
@@ -21,19 +23,26 @@ def build_transformer_model(checkpoint_path:str=None, config_path:str=None, mode
         checkpoint_path (str): _description_
         config_path (str): _description_
         model (str, optional): _description_. Defaults to 'bert'.
-        extra_config (dict): 如需修改config_path中参数如，dropout_rate，在此传入即可
+        extra_config (dict): 如需修改config_path中参数如：dropout_rate，pad_token_id等 在此传入即可 NOTE
+
+        config相关参数透传说明：
+            step1: 加载config.json文件 
+            step2: extra_config，添加或覆盖config参数
+            step3: Config实例化
+            step4: BaseModel中对部分参数进行更新，update_config
     """
     config = load_config(config_path)
     config.update(extra_config)
 
     models = {
-        "bert": BertModel,
-        "t5": T5Model,
-        "GPT": GptModel,
+        "bert": (BertModel, BertConfig),
+        "t5": (T5Model, T5Config),
+        "GPT": (GptModel, GptConfig),
     }
 
-    MODEL = models[model]
-    transformer: BaseModel = MODEL(config, **kwargs)
+    MODEL, CONFIG = models[model]
+    _config: BaseConfig = CONFIG(**config)
+    transformer: BaseModel = MODEL(_config, **kwargs)
 
     # 初始化权重 为transformer的每个submodule应用_init_weights函数
     transformer.apply(transformer._init_weights)

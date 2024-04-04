@@ -5,9 +5,22 @@ nlpcol(nlp collction)： 一个简单的nlp基础模型集合。
 
 ## 💡 TODO
 - 训练逻辑优化：混合精度、grad_checkoutpoint 
+- 训练日志优化
 - 常用优化器实现 
 - xlnet unilm bart 
 - llm: llama chatgpt 
+- config的加载方式  extra_config
+
+
+## 🚀 预训练权重
+**所有权重均为torch版本。代码阅读建议按表格顺序阅读**
+
+| 模型分类| 模型名称 | 权重来源 | 官方项目地址 |
+| ----- | ----- | ----- | ----- |
+| bert | bert-base-chinese | [谷歌中文bert](https://huggingface.co/google-bert/bert-base-chinese) | [bert](https://github.com/google-research/bert) |
+| mt5 | mt5-base | [谷歌多语言版T5](https://huggingface.co/google/mt5-base) | [t5](https://github.com/google-research/text-to-text-transfer-transformer) |
+| gpt | openai-gpt | [openai-gpt1](https://huggingface.co/openai-community/openai-gpt) | [finetune-transformer-lm](https://github.com/openai/finetune-transformer-lm) |
+| gpt | CDial-GPT_LCCC-base | [清华coai](https://huggingface.co/thu-coai/CDial-GPT_LCCC-base) | [CDial-GPT](https://github.com/thu-coai/CDial-GPT) |
 
 
 # ref: 

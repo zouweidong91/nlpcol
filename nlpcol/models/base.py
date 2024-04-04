@@ -22,38 +22,47 @@ class BaseConfig:
     layer_norm_eps: float # 很小的正数，确保不会出现除以零
     hidden_act: str # 激活函数
 
-    eos_token_id: int
-    bos_token_id: int # bos_token_id 默认为 pad_token_id
-    pad_token_id: int
+    # 3个特殊token，eos_token_id, bos_token_id为generate时用
+    # config.json文件没有的话，需要在extra_config参数中传入
+    pad_token_id: int = None
+    bos_token_id: int = None # bos_token_id 默认为 pad_token_id
+    eos_token_id: int = None
+    
     max_position:int  # 最大位置编码
     max_batch_size:int  # 推理过程中batch_size不能大于此值， kv_cache用
 
     # decoder 模型配置
-    is_decoder: bool # 是否是decoder端
+    is_decoder: bool # EncDec结构中，指示是否是decoder端
 
     # 其他额外的默认配置
     use_bias: bool = True # nn.liner是否使用偏置  e.g. t5不使用
     layer_norm_type: str = 'post' # [pre, post] 是否在atten操作之前归一化
     tie_word_embeddings: bool = True # token_embeddings和lm_head权重共享
+
+    prefix: str = "" # 同一类模型，权重参数会有少许差异。
     
 
 
-
 class BaseModel(nn.Module):
-    def __init__(self, config: dict, **kwargs):
+    def __init__(self, config: BaseConfig, **kwargs):
         super().__init__()
+        self.config = config
+
         self.skip_init = kwargs.get('skip_init', False) # 是否跳过初始化 TODO 待删除
         self.keep_tokens: list = kwargs.get('keep_tokens', None) # 要保留的词ID列表
-        self.update_config(config)
+        
+        self.update_config()
 
-        self.config: BaseConfig
-
-    def update_config(self, config:dict):
+    def update_config(self):
         """更新更新config参数
         1、根据keep_tokens更新vocab_size
+        2、更新prefix 
         """
         if self.keep_tokens is not None:
-            config['vocab_size'] = len(self.keep_tokens)
+            self.config.vocab_size = len(self.keep_tokens)
+
+        if self.config.prefix:
+            self.config.prefix += "."
         
         
     def _init_weights(self, module:nn.Module):
@@ -157,9 +166,9 @@ class BaseModel(nn.Module):
         return self.lm_head
 
     @torch.no_grad()
-    def predict(self, X:list):
+    def predict(self, *args, **kwargs):
         # model.eval() 不启用 Batch Normalization 和 Dropout。
         self.eval()
-        output = self.forward(*X)
+        output = self.forward(*args, **kwargs)
         return output
 

@@ -1,18 +1,13 @@
-
-# 基础测试：lm预测
-
-import json
+# mt5测试
 
 import torch
 import torch.nn as nn
 from nlpcol.config import device
 from nlpcol.model import build_transformer_model, load_config
-from nlpcol.models.bert import BertModel, BertOutput
 from nlpcol.models.t5 import T5Model
 from nlpcol.tokenizers import SpTokenizer, Tokenizer
 from nlpcol.utils.snippets import (model_parameter_diff, save_model_parameter,
                                    seed_everything)
-from torch.nn import functional as F
 
 seed_everything(42)
 
@@ -26,15 +21,15 @@ spm_path = model_path + '/spiece.model'
 # 建立分词器
 tokenizer = SpTokenizer(spm_path, token_start=None, token_end='</s>')
 
-model:T5Model = build_transformer_model(checkpoint_path, config_path, 't5', extra_config={"max_seq_length": 512}, skip_init=True)  # 建立模型，加载权重 下游任务无额外参数 暂时不需初始化
+model:T5Model = build_transformer_model(checkpoint_path, config_path, 't5', extra_config={"max_seq_length": 12}, skip_init=True)  # 建立模型，加载权重 下游任务无额外参数 暂时不需初始化
 model.eval()
 model.to(device)
 
-
-model_parameter_diff(
-    state_dict_1=model.state_dict(), 
-    state_dict_2=torch.load(checkpoint_path, map_location='cpu')
-) 
+# 对比模型参数
+# model_parameter_diff(
+#     state_dict_1=model.state_dict(), 
+#     state_dict_2=torch.load(checkpoint_path, map_location='cpu')
+# ) 
 
 # training
 def get_loss():
@@ -64,11 +59,11 @@ def generate():
     print(tokens, input_ids, _)
 
     input_ids = torch.tensor([input_ids, input_ids]).to(device)
-    # logits = model.generate(input_ids, mode='do_sample', top_k=20, top_p=0.9, temperature=0.9)
-    logits = model.generate(input_ids, mode='greedy_search', max_length=32)
-    # logits = model.generate(input_ids, mode='beam_search', num_beams=4)
-    logits=logits[:,1:] # 去掉bos
-    predict_label = [tokenizer.decode(i) for i in logits]
+    # token_ids = model.generate(input_ids, mode='do_sample', top_k=20, top_p=0.9, temperature=0.9)
+    token_ids = model.generate(input_ids, mode='greedy_search', max_new_tokens=32)
+    print(token_ids)
+    # token_ids = model.generate(input_ids, mode='beam_search', num_beams=4)
+    predict_label = [tokenizer.decode(i) for i in token_ids]
     print(predict_label)
     # ['<extra_id_0>北京,简称 <extra_id_1>。']
 

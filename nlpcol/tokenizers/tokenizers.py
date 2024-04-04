@@ -116,19 +116,18 @@ class SampleTokenizer:
 
 """Tokenization classes."""
 import collections
-import logging
 import re
 import unicodedata
-from collections import OrderedDict
 from io import open
+
+from nlpcol.utils import logger
 
 from .base import TokenizerBase
 from .helpers import lowercase_and_normalize
 from .t_basic import BasicTokenizer
-from .t_wordpiece import WordpieceTokenizer
 from .t_bpe import BPETokenizer
+from .t_wordpiece import WordpieceTokenizer
 
-logger = logging.getLogger(__name__)
 
 def load_vocab(dict_path, encoding="utf-8", simplified=False, startswith=None):
     """加载词典文件到dict
@@ -214,14 +213,17 @@ class Tokenizer(TokenizerBase):
         self._token_mask_id = self.mask_token_id = None
         self._token_start_id = self.start_token_id = None
         self._token_end_id = self.end_token_id = None
-        # for token in ['pad', 'unk', 'mask', 'start', 'end']:
-        #     try:
-        #         _token_id = token_dict[getattr(self, '_token_%s' % token)]
-        #         setattr(self, '_token_%s_id' % token, _token_id)
-        #         setattr(self, '%s_token_id' % token, _token_id)
-        #     except:
-        #         delattr(self, '_token_%s_id' % token)
-        #         delattr(self, '%s_token_id' % token)
+        # 设置5个特殊token的id
+        for token in ['pad', 'unk', 'mask', 'start', 'end']:
+            try:
+                _token_id = token_dict[getattr(self, '_token_%s' % token)]
+                setattr(self, '_token_%s_id' % token, _token_id)
+                setattr(self, '%s_token_id' % token, _token_id)
+            except:
+                logger.warning(f"不存在token: {token}")
+                delattr(self, '_token_%s_id' % token)
+                delattr(self, '%s_token_id' % token)
+
 
     def _tokenize(self, text, pre_tokenize=True):
         """基本分词函数
@@ -267,7 +269,7 @@ class Tokenizer(TokenizerBase):
         """转为可读文本
         """
         tokens = self.ids_to_tokens(ids)
-        tokens = [token for token in tokens if not self._is_special(token)]
+        tokens = [token for token in tokens if not self._is_special(token)] # 过滤特殊token
 
         text, flag = '', False
         for i, token in enumerate(tokens):

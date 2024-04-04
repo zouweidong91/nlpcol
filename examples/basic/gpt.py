@@ -1,33 +1,30 @@
 
-# 基础测试：mlm预测
+# openai-gpt测试
 
 import torch
 import torch.nn as nn
 from nlpcol.config import device
-from nlpcol.generation import DecGenerationMixin
 from nlpcol.model import build_transformer_model
-from nlpcol.models.bert import BertModel, BertOutput
 from nlpcol.models.gpt import GptModel
 from nlpcol.tokenizers import Tokenizer
 from nlpcol.utils.snippets import model_parameter_diff, seed_everything
-from torch.nn.utils.rnn import pad_sequence
 
 seed_everything(42)
 
 from nlpcol.tokenizers import Tokenizer
 
 model_path = "/home/dataset/pretrain_ckpt/gpt/openai-gpt/"
-vocab_path = model_path + "/vocab.txt"
 config_path = model_path + "/config.json"
 checkpoint_path = model_path + '/pytorch_model.bin'
 
 # 建立分词器
-tokenizer = Tokenizer(model_path, tokenizer_type='bpe', token_start=None, token_end=None, token_unk=None)
+tokenizer = Tokenizer(model_path, tokenizer_type='bpe', token_start=None, token_end=None, token_unk="<unk>")
 
 model:GptModel = build_transformer_model(checkpoint_path, config_path=config_path, model='GPT')  # 建立模型，加载权重
 model.eval() # 关掉nn.dropout model.training=False
 model.to(device)
 
+# 对比模型参数
 # model_parameter_diff(
 #     state_dict_1=model.state_dict(), 
 #     state_dict_2=torch.load(checkpoint_path, map_location='cpu')
@@ -86,10 +83,11 @@ def generate():
     print(input_ids)
 
     # generate answer  greed search
-    logits = model.generate(input_ids = input_ids, max_length=32, num_beams=1)
-    predict_label = [tokenizer.decode(i) for i in logits]
+    token_ids = model.generate(input_ids = input_ids, max_new_tokens=32, num_beams=1)
+    predict_label = [tokenizer.decode(i) for i in token_ids]
     print(predict_label)
     # ['my name is julien and i like to think that i am a very good person. i am a very good person. i am a very good person. i']
+    # ['think that i am a very good person . i am a very good person . i am a very good person . i']  rm_prompt_token
 
 get_loss()
 generate()

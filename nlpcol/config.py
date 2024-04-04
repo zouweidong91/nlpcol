@@ -1,7 +1,9 @@
 
-from nlpcol.utils.snippets import get_device
 from dataclasses import dataclass, field
 from typing import Optional
+
+from nlpcol.utils.snippets import get_device
+
 
 class WordDir:
     dataset_dir = '/home/dataset'

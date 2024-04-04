@@ -87,18 +87,21 @@ class Config(BaseConfig):
         self.dropout_rate: float = kwargs.get('dropout_rate')
         self.initializer_range: float = kwargs.get('initializer_factor')
         self.layer_norm_eps: float = kwargs.get('layer_norm_epsilon')
-        self.eos_token_id: int = kwargs.get('eos_token_id')
-        self.bos_token_id: int = kwargs.get('bos_token_id', 0) # bos_token_id 默认为 pad_token_id
-        self.pad_token_id: int = kwargs.get('pad_token_id')
-        self.max_position:int = kwargs.get('max_position', 512)  # 需要大于max(tar_len, src_len)， 相对位置编码用
-        self.max_batch_size:int = kwargs.get('max_batch_size', 16)  # 推理过程中batch_size不能大于此值， kv_cache用
         self.hidden_act: str = kwargs.get('hidden_act', "gelu_new")
+
+        self.pad_token_id: int = kwargs.get('pad_token_id')
+        self.bos_token_id: int = kwargs.get('bos_token_id', self.pad_token_id) # T5 bos_token_id 默认为 pad_token_id
+        self.eos_token_id: int = kwargs.get('eos_token_id')
+        
+        self.max_position:int = kwargs.get('max_seq_length', 512)  # 需要大于max(tar_len, src_len)， 相对位置编码用
+        self.max_batch_size:int = kwargs.get('max_batch_size', 16)  # 推理过程中batch_size不能大于此值， kv_cache用
 
         self.use_bias: bool = False
         self.layer_norm_type = 'pre'
         self.tie_word_embeddings: bool = False
 
-        # T5 config配置
+
+        # T5 config文件配置
         self.architectures: str = kwargs.get('architectures')
         self.model_type: str = kwargs.get('model_type')
         self.decoder_start_token_id: int = kwargs.get('decoder_start_token_id')
@@ -305,7 +308,8 @@ class Seq2SeqLMOutput:
 class T5Model(BaseModel, EncDecGenerationMixin):
     def __init__(self, config: Config, **kwargs):
         super().__init__(config, **kwargs)
-        self.config = config = Config(**config)
+        self.config: Config
+        
         self.embed = T5Embeddings(config) # 在enc和dec之间共享embedding
 
         enc_config = copy.deepcopy(config)
@@ -349,8 +353,6 @@ class T5Model(BaseModel, EncDecGenerationMixin):
             decoder_input_ids = torch.zeros_like(labels)
             decoder_input_ids[..., 1:] = labels[..., :-1].clone() # 向右偏移一位
             decoder_input_ids[..., 0] = self.config.bos_token_id # 起始位置用padding代表
-            # label padding位为-100, decoder_input_ids需要将-100替换为0
-            decoder_input_ids.masked_fill_(decoder_input_ids==-100, self.config.pad_token_id)
             
         # decoder
         dec_output:T5StackOutput = self.decoder(

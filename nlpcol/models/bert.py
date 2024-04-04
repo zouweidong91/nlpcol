@@ -56,9 +56,10 @@ class Config(BaseConfig):
         self.initializer_range: float = kwargs.get('initializer_range')
         self.layer_norm_eps: float = kwargs.get('layer_norm_eps')
         self.num_layers: int = kwargs.get('num_hidden_layers')
+        
         self.pad_token_id: int = kwargs.get('pad_token_id')
 
-        # bert config配置
+        # bert config文件配置
         self.architectures: list = kwargs.get('architectures')
         self.attention_probs_dropout_prob: float = kwargs.get('attention_probs_dropout_prob') # 直接用hidden_dropout_prob
         self.directionality: str = kwargs.get('directionality')
@@ -224,14 +225,14 @@ class BertOutput:
 class BertModel(BaseModel):
     """bert 模型"""
     def __init__(self,
-        config: dict,
+        config: Config,
         with_pool = False, # 是否包含pool部分
         with_nsp = False,  # 是否包含nsp部分
         with_mlm = False,  # 是否包含mlm部分
         **kwargs
     ):
         super().__init__(config, **kwargs)
-        self.config = config = Config(**config)
+        self.config: Config
         self.with_pool = with_pool
         self.with_nsp = with_nsp
         self.with_mlm = with_mlm

@@ -42,10 +42,11 @@ class LayerTest(unittest.TestCase):
         token_ids, _ = tokenizer.encode("The <extra_id_0> walks in <extra_id_1> park")
         logger.info(token_ids)
         logger.info(tokenizer.ids_to_tokens(token_ids))
-        # [CLS]湖北省省会在[MASK][MASK]市。[SEP]
+        # ['▁The', '▁<extra_id_0>', '▁walk', 's', '▁in', '▁<extra_id_1>', '▁park', '</s>']
 
 
     def test_gpt_tokenizer(self):
+        # 和OpenAIGPTTokenizer分词效果对比
         from nlpcol.tokenizers import Tokenizer
         from transformers import OpenAIGPTTokenizer
 
@@ -53,17 +54,29 @@ class LayerTest(unittest.TestCase):
         model_path = "/home/dataset/pretrain_ckpt/gpt/openai-gpt/"
         tokenizer = OpenAIGPTTokenizer.from_pretrained(model_path)
 
-        text = "hello, my dog is cutes."
+        text = "hello, my dog is cute"
         tokens = tokenizer.tokenize(text)
         logger.info(tokens)
 
         # nlpcol分词
-        tokenizer = Tokenizer(model_path, tokenizer_type='bpe', token_start=None, token_end=None, token_unk=None)
+        tokenizer = Tokenizer(model_path, tokenizer_type='bpe', token_start=None, token_end=None, token_unk="<unk>")
         token_ids, segments_ids = tokenizer.encode(text)
         logger.info(token_ids)
         logger.info(tokenizer.ids_to_tokens(token_ids))
+        # ['hello</w>', ',</w>', 'my</w>', 'dog</w>', 'is</w>', 'cute</w>'] 
 
         
+    def test_gpt_CDial_tokenizer(self):
+        from nlpcol.tokenizers import Tokenizer
+        model_path = "/home/dataset/pretrain_ckpt/gpt/CDial-GPT_LCCC-base"
+        vocab_path = model_path + "/vocab.txt"
+
+        text = '别爱我没结果'
+        tokenizer = Tokenizer(vocab_path, do_lower_case=True)
+        token_ids, segments_ids = tokenizer.encode(text)
+        logger.info(token_ids)
+        logger.info(tokenizer.ids_to_tokens(token_ids))
+        # ['[CLS]', '别', '爱', '我', '没', '结', '果', '[SEP]']
 
 
 

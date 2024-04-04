@@ -25,45 +25,40 @@ class GenerationMixin:
     def _update_model_kwargs_for_generation(self, model_kwargs:dict) -> dict:
         """更新model_kwargs字典，为下一个step做准备"""
 
-    def get_max_decoder_len(self, max_length):
-        """获取最大解码长度"""
-        return max_length
-
     def update_next_tokens(self, next_tokens, *args):
         """更新next_tokens"""
         return next_tokens
+
+    def rm_prompt_token_ids(self, decoder_input_ids: torch.LongTensor, input_ids: torch.LongTensor):
+        """decode_only模型去掉prompt部分"""
+        return decoder_input_ids.tolist()
                 
     @torch.inference_mode()
     def generate(
         self, 
         input_ids: torch.LongTensor, # (batch_size, seq_len)
         mode: str = 'greedy_search', # 解码方式
-        *args, 
-        **kwargs
-    ):
+        **model_kwargs
+    ) -> List[List[int]]:
         self.eval() # eval模式
         """batch_generate"""
         assert mode in ('greedy_search', 'beam_search', 'do_sample')
 
         if mode == "beam_search":
-            return self.generate_beam(input_ids, *args, **kwargs)
+            return self.generate_beam(input_ids, **model_kwargs)
 
         batch_size = input_ids.shape[0]
-        device = input_ids.device
-        max_length = kwargs['max_length']
+        device = input_ids.device 
         decoder_input_ids = self.init_decoder_input_ids(input_ids)
-        max_decoder_len = self.get_max_decoder_len(max_length)
         unfinished_sequences = torch.ones(batch_size, dtype=torch.long, device=device)
-
-        model_kwargs = {}
         model_kwargs['decoder_input_ids'] = decoder_input_ids
 
-        for step in range(max_decoder_len):
+        for step in range(model_kwargs['max_new_tokens']):
             model_inputs:dict = self.prepare_inputs_for_generation(step, input_ids, **model_kwargs)
             outputs = self(**model_inputs)    # 获取dec端的输出
 
             next_token_logits = outputs.lm_logits[:, -1, :] # 去最后一步的预测结果 (bs, vocab_size)
-            next_tokens = getattr(self, mode)(next_token_logits, *args, **kwargs) # (bs)
+            next_tokens = getattr(self, mode)(next_token_logits, **model_kwargs) # (bs)
             next_tokens = self.update_next_tokens(next_tokens, step)
 
             # 已经完成的序列，next_tokens强制设置为pad_token_id
@@ -83,11 +78,12 @@ class GenerationMixin:
                 # 当一个batch内每条数据都遇到eos_token_id时，推理结束
                 if unfinished_sequences.max() == 0:
                     break
-
+        
+        decoder_input_ids = self.rm_prompt_token_ids(decoder_input_ids, input_ids)
         return decoder_input_ids
 
 
-    def greedy_search(self, scores: Tensor, *args, **kwargs) -> Tensor:
+    def greedy_search(self, scores: Tensor, **model_kwargs) -> Tensor:
         next_tokens = torch.argmax(scores, dim=-1) # (batch_size)
         return next_tokens
 
@@ -98,8 +94,7 @@ class GenerationMixin:
         top_k: int = None, # 取概率最大的 K 个词
         top_p: float = None,  # 小于1。累积概率超过概率 p 的最小单词集中进行 一般取0.9左右
         temperature: float = 1, # 温度参数(0,2)，temperature<1时，拉大分值间的差异，softmax后分值大的采样概率更高
-        *args, 
-        **kwargs
+        **model_kwargs
     ) -> Tensor:
         # top-p 和 top-K 采样于传统的 贪心 和 波束 搜索相比，能产生更流畅的文本
         scores = scores / temperature
@@ -131,8 +126,7 @@ class GenerationMixin:
         num_beams:int=1,
         length_penalty=1.0,
         do_early_stopping=False,
-        *args, 
-        **kwargs
+        **model_kwargs
     ) -> Tensor:
 
         batch_size = input_ids.shape[0]
@@ -142,8 +136,6 @@ class GenerationMixin:
         # 对input_ids张量进行扩展
         input_ids = input_ids.repeat_interleave(num_beams, dim=0)  # (batch_size*num_beams, seq_len)  [0 0 1 1 2 2]
         decoder_input_ids = self.init_decoder_input_ids(input_ids)
-        max_decoder_len = self.get_max_decoder_len(kwargs)
-        model_kwargs = {}
         model_kwargs['decoder_input_ids'] = decoder_input_ids
 
         beam_scorer = BeamSearchScorer(
@@ -160,7 +152,7 @@ class GenerationMixin:
         beam_scores[:, 1:] = -1e9
         beam_scores = beam_scores.view((batch_size * num_beams,)) # (batch_size * num_beams)
 
-        for step in range(max_decoder_len):
+        for step in range(model_kwargs['max_new_tokens']):
             model_inputs:dict = self.prepare_inputs_for_generation(input_ids, **model_kwargs)
             outputs = self(**model_inputs, start_pos = step)    # 获取dec端的输出
 
@@ -204,12 +196,13 @@ class GenerationMixin:
         sequence_outputs = beam_scorer.finalize(
             input_ids,
             beam_scores,
-            max_length=max_decoder_len,
+            max_length=model_kwargs['max_new_tokens'],
             pad_token_id=self.config.pad_token_id,
             eos_token_id=self.config.eos_token_id,
         )
 
-        return sequence_outputs["sequences"]
+        sequences = self.rm_prompt_token_ids(sequence_outputs["sequences"], input_ids)
+        return sequences
 
 
     def stream_generate(self):
@@ -229,7 +222,7 @@ class EncDecGenerationMixin(GenerationMixin):
         decoder_input_ids = None,
         encoder_outputs = None,
         attention_mask = None,
-        **kwargs
+        **model_kwargs
     ) -> dict:
         """用kv_cache时，只需要取当前时刻的token_id即可 enc-dec"""
         decoder_input_ids = decoder_input_ids[:, -1:]
@@ -259,7 +252,9 @@ class DecGenerationMixin(GenerationMixin):
     PADDING_ID = -50  # decoder模型用。随机设置的，和padding_id区分开 TODO 
 
     def init_decoder_input_ids(self, input_ids: torch.Tensor):
-        """起始decoder_input_ids  主要考虑batch内输入长度不一致的情况"""
+        """起始decoder_input_ids  主要考虑batch内输入长度不一致的情况
+        NOTE 部分模型有token_type_ids，也要做相应处理，外部继承实现
+        """
         self.input_ids = input_ids
         self.input_mask = input_ids != self.PADDING_ID
         self.min_input_len:int = self.input_mask.sum(dim=-1).min().tolist()
@@ -268,28 +263,34 @@ class DecGenerationMixin(GenerationMixin):
         input_ids = input_ids[:, :self.min_input_len]
         return input_ids
 
-    def get_max_decoder_len(self, max_length) -> int:
-        # 获取原始的最短输入
-        max_decoder_len = max_length - self.min_input_len
-        return max_decoder_len
-
     def prepare_inputs_for_generation(
         self,
         step: int,
         input_ids: torch.Tensor = None,
         decoder_input_ids = None,
         is_first_forward: bool = True,
-        **kwargs
+        token_type_ids: torch.Tensor = None,
+        **model_kwargs
     ) -> dict:
         """用kv_cache时，只需要取当前时刻的token_id即可"""
         if not is_first_forward:
             step += self.min_input_len-1
-            decoder_input_ids = decoder_input_ids[:, -1:]
+            decoder_input_ids = decoder_input_ids[:, -1:]       # (batch_size, 1)
 
-        return {
+            # token_type_ids处理
+            if token_type_ids is not None:
+                token_type_ids = token_type_ids[:, -1:]
+            
+
+        model_inputs = {
             "input_ids": decoder_input_ids,
             "start_pos": step,
         }
+        
+        if token_type_ids is not None:
+            model_inputs['token_type_ids'] = token_type_ids
+            
+        return model_inputs
 
     def _update_model_kwargs_for_generation(
             self,
@@ -299,6 +300,7 @@ class DecGenerationMixin(GenerationMixin):
     ) -> dict:
         model_kwargs['decoder_input_ids'] = decoder_input_ids
         model_kwargs['is_first_forward'] = False
+
         return model_kwargs
 
     def update_next_tokens(self, next_tokens, step):
@@ -314,6 +316,10 @@ class DecGenerationMixin(GenerationMixin):
         
         return next_tokens
 
+    def rm_prompt_token_ids(self, decoder_input_ids: torch.LongTensor, input_ids: torch.LongTensor):
+        """decode_only模型去掉prompt部分"""
+        decoder_input_ids = [ids[len(input_ids[i]):] for i, ids in enumerate(decoder_input_ids.tolist())]
+        return decoder_input_ids
 
 
 class BeamSearchScorer:
@@ -426,7 +432,7 @@ class BeamSearchScorer:
         max_length: int,
         pad_token_id: Optional[int] = None,
         eos_token_id: Optional[Union[int, List[int]]] = None,
-    ) -> Tuple[torch.LongTensor]:
+    ) -> dict:
         batch_size = len(self._beam_hyps)
 
         if isinstance(eos_token_id, int):
