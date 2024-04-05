@@ -1,7 +1,6 @@
 import json
 import os
-
-from .helpers import get_pairs
+from functools import lru_cache
 
 # 训练方法：从字符级的小词表出发，训练产生合并规则以及一个词表
 # 编码方法：将文本切分成字符，再应用训练阶段获得的合并规则
@@ -12,8 +11,46 @@ VOCAB_FILE = "vocab.json"
 MERGES_FILE = "merges.txt"
 
 
+def get_pairs(word):
+    """
+    Return set of symbol pairs in a word. word is represented as tuple of symbols (symbols being variable-length
+    strings)
+    """
+    pairs = set()
+    prev_char = word[0]
+    for char in word[1:]:
+        pairs.add((prev_char, char))
+        prev_char = char
+    return pairs
+
+
+@lru_cache()
+def bytes_to_unicode():
+    """
+    Returns list of utf-8 byte and a mapping to unicode strings. We specifically avoids mapping to whitespace/control
+    characters the bpe code barfs on.
+
+    The reversible bpe codes work on unicode strings. This means you need a large # of unicode characters in your vocab
+    if you want to avoid UNKs. When you're at something like a 10B token dataset you end up needing around 5K for
+    decent coverage. This is a significant percentage of your normal, say, 32K bpe vocab. To avoid that, we want lookup
+    tables between utf-8 bytes and unicode strings.
+    """
+    bs = (
+        list(range(ord("!"), ord("~") + 1)) + list(range(ord("¡"), ord("¬") + 1)) + list(range(ord("®"), ord("ÿ") + 1))
+    )
+    cs = bs[:]
+    n = 0
+    for b in range(2**8):
+        if b not in bs:
+            bs.append(b)
+            cs.append(2**8 + n)
+            n += 1
+    cs = [chr(n) for n in cs]
+    return dict(zip(bs, cs))
+
+
 class BPETokenizer:
-    
+    # gpt1
     def __init__(self, model_path):
         vocab_file = os.path.join(model_path, VOCAB_FILE)
         merges_file = os.path.join(model_path, MERGES_FILE)
@@ -28,14 +65,23 @@ class BPETokenizer:
         self.cache = {}
 
 
-    def bpe(self, token:str) -> str:
-        word = tuple(token[:-1]) + (token[-1] + "</w>",)    # ('h', 'e', 'l', 'l', 'o</w>')
+    def bpe(self, token:str, suffix:str="</w>") -> str:
+        """_summary_
+
+        Args:
+            token (str): _description_
+            suffix (str, optional): 分词后缀，gpt为"</w>". gpt2为"" 
+
+        Returns:
+            str: _description_
+        """
         if token in self.cache:
             return self.cache[token]
+        word = tuple(token[:-1]) + (token[-1] + suffix,)    # ('h', 'e', 'l', 'l', 'o</w>')
         pairs = get_pairs(word)
 
         if not pairs:
-            return token + "</w>"
+            return token + suffix
 
         while True:
             bigram = min(pairs, key=lambda pair: self.bpe_ranks.get(pair, float("inf")))
@@ -67,12 +113,29 @@ class BPETokenizer:
             else:
                 pairs = get_pairs(word)
         word = " ".join(word)
-        if word == "\n  </w>":
-            word = "\n</w>"
+
+        if word == f"\n  {suffix}":
+            word = f"\n{suffix}"
+
         self.cache[token] = word
         return word
 
     
     def tokenize(self, token:str) -> list:
         token = self.bpe(token)
+        return list(token.split(" "))
+
+
+
+class BBPETokenizer(BPETokenizer):
+    # gpt2
+    def __init__(self, model_path):
+        super().__init__(model_path)
+        self.byte_encoder = bytes_to_unicode()
+        self.byte_decoder = {v: k for k, v in self.byte_encoder.items()}
+
+    def tokenize(self, token:str) -> list:
+        # hello
+        token = "".join(self.byte_encoder[b] for b in token.encode("utf-8"))
+        token = self.bpe(token, suffix="")
         return list(token.split(" "))

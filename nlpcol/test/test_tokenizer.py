@@ -65,7 +65,39 @@ class LayerTest(unittest.TestCase):
         logger.info(tokenizer.ids_to_tokens(token_ids))
         # ['hello</w>', ',</w>', 'my</w>', 'dog</w>', 'is</w>', 'cute</w>'] 
 
+    def test_gpt2_tokenizer(self):
+        # 和OpenAIGPTTokenizer分词效果对比
+        from nlpcol.tokenizers import Tokenizer
+        from transformers import GPT2Tokenizer
+        # 原生openai分词
+        model_path = "/home/dataset/pretrain_ckpt/gpt2/openai-gpt2"
+        tokenizer = GPT2Tokenizer.from_pretrained(model_path)
+
+        text = "My name is Lewis and I like to"
+        tokens = tokenizer.tokenize(text)
+        input_ids = tokenizer(text, return_tensors="pt").input_ids.tolist()
+        logger.info("\n %s \n %s \n", tokens, input_ids)
+
+        # nlpcol分词
+        tokenizer = Tokenizer(
+            model_path, 
+            tokenizer_type='bbpe', 
+            token_start=None, 
+            token_end=None, 
+            token_unk='<|endoftext|>',
+            do_lower_case=False,
+            do_basic_tokenize=False,
+            )
+
+        token_ids, segments_ids = tokenizer.encode(text)
+        logger.info(tokenizer.ids_to_tokens(token_ids))
+        logger.info(tokenizer.decode(token_ids))
+        logger.info(token_ids)
+        # [3666, 1438, 318, 10174, 290, 314, 588, 284]
+        # ['My', 'Ġname', 'Ġis', 'ĠLewis', 'Ġand', 'ĠI', 'Ġlike', 'Ġto']  
+        # Ġ 为空格
         
+
     def test_gpt_CDial_tokenizer(self):
         from nlpcol.tokenizers import Tokenizer
         model_path = "/home/dataset/pretrain_ckpt/gpt/CDial-GPT_LCCC-base"

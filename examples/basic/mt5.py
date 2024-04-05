@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from nlpcol.config import device
 from nlpcol.model import build_transformer_model, load_config
-from nlpcol.models.t5 import T5Model
+from nlpcol.models import T5Model
 from nlpcol.tokenizers import SpTokenizer, Tokenizer
 from nlpcol.utils.snippets import (model_parameter_diff, save_model_parameter,
                                    seed_everything)

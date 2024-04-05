@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from nlpcol.config import device
 from nlpcol.model import build_transformer_model
-from nlpcol.models.gpt import GptModel
+from nlpcol.models import GptModel
 from nlpcol.tokenizers import Tokenizer
 from nlpcol.utils.snippets import model_parameter_diff, seed_everything
 

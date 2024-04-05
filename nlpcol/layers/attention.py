@@ -218,7 +218,10 @@ class EncDecAttention(DecAttention):
 class AttentionOutput(nn.Module):
     """每个attention层后都会有一个线性层  
     LayerNorm分pre_norm和post_norm
-    顺序为： Drop --> Add --> LayerNorm(post)
+    顺序为： 
+        atten --> Drop --> Add --> LayerNorm(post)
+        LayerNorm --> atten --> Drop --> Add(pre)
+        pre模式下在aten内部处理。 
     """
     def __init__(self, config:Config):
         super().__init__()

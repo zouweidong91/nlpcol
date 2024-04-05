@@ -125,7 +125,7 @@ from nlpcol.utils import logger
 from .base import TokenizerBase
 from .helpers import lowercase_and_normalize
 from .t_basic import BasicTokenizer
-from .t_bpe import BPETokenizer
+from .t_bpe import BBPETokenizer, BPETokenizer
 from .t_wordpiece import WordpieceTokenizer
 
 
@@ -198,8 +198,11 @@ class Tokenizer(TokenizerBase):
         if tokenizer_type == "wordpiece":
             token_dict = load_vocab(vocab_or_model_path)
             self._tokenizer = WordpieceTokenizer(vocab=token_dict, unk_token=self._token_unk, do_tokenize_unk=do_tokenize_unk)
-        else:
+        elif tokenizer_type == "bpe":
             self._tokenizer = BPETokenizer(vocab_or_model_path)
+            token_dict = self._tokenizer.encoder
+        elif tokenizer_type == "bbpe":
+            self._tokenizer = BBPETokenizer(vocab_or_model_path)
             token_dict = self._tokenizer.encoder
 
         self._do_lower_case = do_lower_case
@@ -216,7 +219,9 @@ class Tokenizer(TokenizerBase):
         # 设置5个特殊token的id
         for token in ['pad', 'unk', 'mask', 'start', 'end']:
             try:
-                _token_id = token_dict[getattr(self, '_token_%s' % token)]
+                token_name = getattr(self, '_token_%s' % token)
+                logger.info("%s: %s", '_token_%s' % token, token_name)
+                _token_id = token_dict[token_name]
                 setattr(self, '_token_%s_id' % token, _token_id)
                 setattr(self, '%s_token_id' % token, _token_id)
             except:
@@ -276,9 +281,13 @@ class Tokenizer(TokenizerBase):
             if token[:2] == '##':
                 text += token[2:]
 
-            #原始gpt 为英文
+            #原始gpt
             elif token[-4:] == '</w>':
                 text += ' ' + token[:-4]
+
+            #原始gpt2  Ġ为空格
+            elif token[0] == 'Ġ':
+                text += ' ' + token[1:]
 
             elif len(token) == 1 and self._is_cjk_character(token):
                 text += token

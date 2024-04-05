@@ -1,13 +1,9 @@
 
 import json
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch import Size, Tensor
-
 from nlpcol.models import (BaseConfig, BaseModel, BertConfig, BertModel,
-                           GptConfig, GptModel, T5Config, T5Model)
+                           Gpt2Config, Gpt2Model, GptConfig, GptModel,
+                           T5Config, T5Model)
 
 
 def load_config(config_path) -> dict:
@@ -38,6 +34,7 @@ def build_transformer_model(checkpoint_path:str=None, config_path:str=None, mode
         "bert": (BertModel, BertConfig),
         "t5": (T5Model, T5Config),
         "GPT": (GptModel, GptConfig),
+        "GPT2": (Gpt2Model, Gpt2Config),
     }
 
     MODEL, CONFIG = models[model]
