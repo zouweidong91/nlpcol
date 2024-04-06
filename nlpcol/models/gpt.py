@@ -9,7 +9,10 @@ from nlpcol.generation import DecGenerationMixin
 from nlpcol.layers.attention import AttentionOutput, DecAttention
 from nlpcol.layers.ffn import FFN
 from torch import Size, Tensor
+import torch
+from nlpcol.layers.embed import GptEmbeddings
 
+from .base import BaseConfig, Decoder
 from .base import BaseConfig, BaseModel
 
 # https://huggingface.co/openai-community/openai-gpt
@@ -22,8 +25,7 @@ from .base import BaseConfig, BaseModel
 # GPT-2	2019 年 2 月	15 亿	    40GB
 # GPT-3	2020 年 5 月	1,750 亿	45TB
 # https://zhuanlan.zhihu.com/p/350017443 gpt系列介绍
-# 1. embedding是token、position、token_type(可选项)三者embedding之和
-# 2. embedding没有加LayerNormalization层
+
 
 
 # config.json
@@ -84,170 +86,17 @@ class Config(BaseConfig):
 
         self.hidden_act: str = kwargs.get('hidden_act', 'gelu_new') # gpt使用gelu_new
         self.prefix: str = kwargs.get('prefix', '') # CDial-GPT相比gpt多了个transformer前缀
+        
 
-
-# ？精简变量命名 TODO
-class GptEmbeddings(nn.Module):
-    """用 word, position 构造embedding
+class GptModel(Decoder):
     """
-    def __init__(self, config: Config):
-        super().__init__()
-        self.token_embeddings = nn.Embedding(config.vocab_size, config.d_model)
-        self.position_embeddings = nn.Embedding(config.max_position, config.d_model)
-        self.dropout = nn.Dropout(config.dropout_rate)
-
-    def forward(
-        self,
-        input_ids: Optional[torch.LongTensor],
-        token_type_ids: Optional[torch.LongTensor],
-        position_ids: Optional[torch.LongTensor] = None,
-        start_pos:int=0 # 解码时使用
-    ) -> Tensor:
-
-        device = input_ids.device
-        btz, seq_len = input_ids.shape
-
-        inputs_embeddings = self.token_embeddings(input_ids)
-
-        if position_ids is None:
-            position_ids = torch.arange(start_pos+seq_len, dtype=torch.long, device=device).unsqueeze(0).expand(btz, -1)
-            position_ids = position_ids[:, start_pos : start_pos+seq_len] # 解码时位置编码也要根据输入长度截取
-        position_embeddings = self.position_embeddings(position_ids)
-
-        # 统一embedding写法 后续模型继承
-        # TODO token_type_ids is None   token_type_embedding = 0
-        # ? 没有归一化
-        if token_type_ids is not None:
-            token_type_ids = token_type_ids.view(-1, token_type_ids.size(1))
-            token_type_embeddings = self.token_embeddings(token_type_ids)
-        else:
-            token_type_embeddings = 0
-            
-
-        embeddings = inputs_embeddings + position_embeddings + token_type_embeddings
-        embeddings = self.dropout(embeddings)
-        return embeddings
-        
-
-class GptLayer(nn.Module):
+    1. embedding是token、position、token_type(可选项)三者embedding之和
+    2. embedding没有加LayerNormalization层
     """
-    顺序为： Attention --> Add --> LayerNorm --> Feed Forward --> Add --> LayerNorm
-    """
-    def __init__(self, config: Config):
-        super().__init__()
+    config: Config
 
-        self.self_attention = DecAttention(config)
-        self.self_attention_output = AttentionOutput(config)
-        self.ffn = FFN(config)
-
-    def forward(
-        self, 
-        hidden_states:Tensor, 
-        attention_mask:Tensor=None, 
-        start_pos:int=0
-    ) -> Tensor:
-
-        # self attention
-        context_layer = self.self_attention(
-            hidden_states, hidden_states, hidden_states, attention_mask, start_pos
-        )
-        hidden_states = self.self_attention_output(context_layer, hidden_states) # add为标准化之前的hidden_states
-
-        # feedforward
-        ffn_output = self.ffn(hidden_states)
-        return ffn_output
-
-@dataclass
-class GptStackOutput:
-    last_hidden_state: torch.FloatTensor = None
-    hidden_states: Optional[List[torch.FloatTensor]] = None
-    attention_mask: Optional[torch.LongTensor] = None # 推理时还需要用到
-
-
-class GptStack(nn.Module):
-    def __init__(self, config: Config, embed:GptEmbeddings):
-        super().__init__()
-        self.embed = embed
-        self.layers = nn.ModuleList([GptLayer(config) for _ in range(config.num_layers)])
-        
-    def forward(
-        self, 
-        input_ids:Tensor, 
-        token_type_ids:Tensor, 
-        attention_mask:Tensor=None,
-        start_pos:int=0
-    ) -> Tensor:
-        hidden_states = self.embed(input_ids, token_type_ids, start_pos=start_pos)
-        all_hidden_states = []
-
-        for i, layer_module in enumerate(self.layers):
-            all_hidden_states.append(hidden_states)
-            hidden_states = layer_module(
-                hidden_states, 
-                attention_mask,
-                start_pos = start_pos
-            )
-
-        all_hidden_states.append(hidden_states)
-
-        return GptStackOutput(
-            last_hidden_state = hidden_states,
-            hidden_states = all_hidden_states,
-            attention_mask = attention_mask
-        )
-
-
-@dataclass
-class CausalLMOutput:
-    loss: torch.FloatTensor = None
-    lm_logits: torch.FloatTensor = None
-    last_hidden_state: torch.FloatTensor= None
-    hidden_states: Optional[List[torch.FloatTensor]] = None
-
-
-class GptModel(BaseModel, DecGenerationMixin):
-    def __init__(self, config: Config, **kwargs):
-        super().__init__(config, **kwargs)
-        self.config: Config
-        
-        self.embed = GptEmbeddings(config)
-        self.decoder = GptStack(config, self.embed)
-        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
-        
-        self.tie_weights()
-
-    def forward(
-        self,
-        input_ids:torch.LongTensor=None,
-        token_type_ids:torch.LongTensor=None,
-        labels:torch.LongTensor=None,
-        start_pos:int=0 # 训练状态下 start_pos=0
-    ):  
-        # decoder
-        dec_output:GptStackOutput = self.decoder(
-            input_ids = input_ids, 
-            token_type_ids = token_type_ids, 
-            attention_mask = None,
-            start_pos = start_pos
-        )
-
-        lm_logits: Tensor = self.lm_head(dec_output.last_hidden_state)
-        loss = None
-
-        # label shift right  
-        if labels is not None:
-            shift_logits = lm_logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            
-            loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
-            loss = loss_fn(shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
-        
-        return CausalLMOutput(
-            loss = loss,
-            lm_logits = lm_logits,
-            last_hidden_state = dec_output.last_hidden_state,
-            hidden_states = dec_output.hidden_states,
-        )
+    def get_embed(self, config: Config):
+        return GptEmbeddings(config)
 
     def parameter_spilt_or_transpose(self, state_dict: dict) -> dict:
         prefix = self.config.prefix

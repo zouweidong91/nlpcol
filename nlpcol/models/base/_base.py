@@ -40,6 +40,7 @@ class BaseConfig:
     tie_word_embeddings: bool = True # token_embeddings和lm_head权重共享
 
     prefix: str = "" # 同一类模型，权重参数会有少许差异。
+    has_final_layernorm: bool = False # lm_head前执行norm
     
 
 
@@ -105,11 +106,11 @@ class BaseModel(nn.Module):
             if new_key in state_dict: # 新旧参数名一样的变量
                 state_dict_new[new_key] = self.load_variable(state_dict, new_key)
 
-            elif new_key in mapping:
+            elif new_key in mapping:  # 新参数名在映射表中
                 old_key = mapping[new_key]
                 state_dict_new[new_key] = self.load_variable(state_dict, old_key)
                 
-            else:
+            else:                      # 多余的新参数名，大多是由权重共享产生
                 print(new_key, '忽略')
                 # TODO 增加warning日志
                 continue
