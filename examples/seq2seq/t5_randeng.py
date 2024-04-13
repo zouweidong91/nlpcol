@@ -26,7 +26,7 @@ model.eval()
 
 # tokenize
 text = "新闻分类任务：【微软披露拓扑量子计算机计划！】这篇文章的类别是什么？故事/文化/娱乐/体育/财经/房产/汽车/教育/科技"
-encode_dict = tokenizer(text, max_length=512, padding='max_length',truncation=True)
+encode_dict = tokenizer([text], max_length=512, padding='max_length',truncation=True)
 
 inputs = {
   "input_ids": torch.tensor([encode_dict['input_ids']]).long(),

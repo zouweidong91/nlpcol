@@ -112,7 +112,6 @@ class DecAttention(EncAttention):
     def get_lm_mask(self, scores:Tensor):
         """定义下三角矩阵的atten_mask， 语言模型用
         scores: [batch_size, num_heads, from_seq_len, to_seq_len]
-        key_mask: [batch_size, to_seq_length]
         """
         qlen, klen = scores.shape[2:]   # 推理阶段qlen==1
         key_mask = torch.tril(
@@ -126,7 +125,13 @@ class DecAttention(EncAttention):
         return key_mask
 
     def get_mask(self, scores:Tensor, key_mask:Tensor):
-        return self.get_lm_mask(scores)
+        mask = self.get_lm_mask(scores)
+
+        if key_mask is not None: # infer模式时
+            padding_mask = self.get_padding_mask(key_mask)
+            mask = mask + padding_mask  # += 运算符用在此处，回报shape不匹配
+
+        return mask
 
     def project(self, query:Tensor, key:Tensor, value:Tensor, start_pos:int):
         # 推理阶段，使用kv_cache

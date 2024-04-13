@@ -144,8 +144,9 @@ def model_parameter_diff(state_dict_1:dict, state_dict_2:dict=None):
     save_model_parameter(state_dict_2, "logs/model_para2.txt")
 
 
-def sequence_padding(inputs, length=None, value=0, seq_dims=1, mode='post'):
+def sequence_padding(inputs, length=None, value=0, seq_dims=1, padding_side='right'):
     """将序列padding到同一长度  部分模型如CDial-GPT，pad_id为1，请注意修改value
+    padding_side 等价于transformers中 left padding 或者 right padding
     """
     if isinstance(inputs, (np.ndarray, list)):
         if length is None:
@@ -161,19 +162,19 @@ def sequence_padding(inputs, length=None, value=0, seq_dims=1, mode='post'):
         for x in inputs:
             x = x[slices]
             for i in range(seq_dims):
-                if mode == 'post':
+                if padding_side == 'right':
                     pad_width[i] = (0, length[i] - np.shape(x)[i])
-                elif mode == 'pre':
+                elif padding_side == 'left':
                     pad_width[i] = (length[i] - np.shape(x)[i], 0)
                 else:
-                    raise ValueError('"mode" argument must be "post" or "pre".')
+                    raise ValueError('"padding_side" argument must be "right" or "left".')
             x = np.pad(x, pad_width, 'constant', constant_values=value)
             outputs.append(x)
 
         return np.array(outputs)
     
     elif isinstance(inputs[0], torch.Tensor):
-        assert mode == 'post', '"mode" argument must be "post" when element is torch.Tensor'
+        assert padding_side == 'right', '"padding_side" argument must be "right" when element is torch.Tensor'
         if length is not None:
             inputs = [i[:length] for i in inputs]
         return pad_sequence(inputs, padding_value=value, batch_first=True)

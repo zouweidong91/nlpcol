@@ -4,8 +4,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from nlpcol.utils import logger
 from torch import Size, Tensor
-from scipy.stats import spearmanr
 
 random_seed = 42
 torch.manual_seed(random_seed)
@@ -34,6 +34,7 @@ class LayerTest(unittest.TestCase):
         """spearmanr相关系数--向量模型评估时用
         （Spearman's rank correlation coefficient）衡量了两个变量之间的相关性，但不要求这两个变量是线性相关的，而是通过对这两个变量的排名来计算它们的相关性
         """
+        from scipy.stats import spearmanr
         x = [3, 2, 3, 4, 5]
         y = [4, 4, 5, 6, 7]
 
@@ -57,5 +58,32 @@ class LayerTest(unittest.TestCase):
         r_s = 1 - 6 * np.sum(rank_diff**2) / (n * (n**2 - 1))
         print("Spearman's correlation coefficient:", r_s)
     
+
+    def test_padding(self):
+        from torch.nn.utils.rnn import pad_sequence
+        a = torch.ones(5)
+        b = torch.ones(6)
+        c = torch.ones(7)
+        pad = pad_sequence([a, b, c])
+        logger.info(pad.size())
+        
+        from nlpcol.utils.snippets import sequence_padding
+        input_ids = [
+            [1,2,3],
+            [1,2,3,4],
+            [1,2,3,4,5]
+        ]
+        pad = sequence_padding(input_ids, mode='post')
+        logger.info('\n %s', pad)
+        # [[1 2 3 0 0]
+        # [1 2 3 4 0]
+        # [1 2 3 4 5]]
+
+        # left padding: decoder-only 模型 batch generation时使用
+        pad = sequence_padding(input_ids, mode='pre')
+        logger.info('\n %s', pad)
+        # [[0 0 1 2 3]
+        # [0 1 2 3 4]
+        # [1 2 3 4 5]]
 
 

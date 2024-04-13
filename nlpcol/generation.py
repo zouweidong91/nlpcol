@@ -7,7 +7,7 @@ from torch import Size, Tensor
 
 if TYPE_CHECKING:
     from nlpcol.models.base import BaseConfig as Config
-    from nlpcol.models.gpt import CausalLMOutput
+    from nlpcol.models.base import CausalLMOutput
     from nlpcol.models.t5 import Seq2SeqLMOutput
 
 
@@ -18,16 +18,13 @@ class GenerationMixin:
 
     def init_decoder_input_ids(self, input_ids: torch.Tensor):
         """初始化decoder_input_ids"""
+        pass
 
     def prepare_inputs_for_generation(self):
         pass
 
     def _update_model_kwargs_for_generation(self, model_kwargs:dict) -> dict:
         """更新model_kwargs字典，为下一个step做准备"""
-
-    def update_next_tokens(self, next_tokens, *args):
-        """更新next_tokens"""
-        return next_tokens
 
     def rm_prompt_token_ids(self, decoder_input_ids: torch.LongTensor, input_ids: torch.LongTensor):
         """decode_only模型去掉prompt部分"""
@@ -59,7 +56,6 @@ class GenerationMixin:
 
             next_token_logits = outputs.lm_logits[:, -1, :] # 去最后一步的预测结果 (bs, vocab_size)
             next_tokens = getattr(self, mode)(next_token_logits, **model_kwargs) # (bs)
-            next_tokens = self.update_next_tokens(next_tokens, step)
 
             # 已经完成的序列，next_tokens强制设置为pad_token_id
             if self.config.pad_token_id is not None:
@@ -248,19 +244,11 @@ class EncDecGenerationMixin(GenerationMixin):
 
 
 class DecGenerationMixin(GenerationMixin):
-    
-    PADDING_ID = -50  # decoder模型用。随机设置的，和padding_id区分开 TODO 
 
     def init_decoder_input_ids(self, input_ids: torch.Tensor):
-        """起始decoder_input_ids  主要考虑batch内输入长度不一致的情况
-        NOTE 部分模型有token_type_ids，也要做相应处理，外部继承实现
+        """起始decoder_input_ids
         """
-        self.input_ids = input_ids
-        self.input_mask = input_ids != self.PADDING_ID
-        self.min_input_len:int = self.input_mask.sum(dim=-1).min().tolist()
-        self.max_input_len:int = self.input_mask.sum(dim=-1).max().tolist()
-
-        input_ids = input_ids[:, :self.min_input_len]
+        self.prompt_length = input_ids.size(1)
         return input_ids
 
     def prepare_inputs_for_generation(
@@ -274,23 +262,27 @@ class DecGenerationMixin(GenerationMixin):
     ) -> dict:
         """用kv_cache时，只需要取当前时刻的token_id即可"""
         if not is_first_forward:
-            step += self.min_input_len-1
+            step += self.prompt_length-1
             decoder_input_ids = decoder_input_ids[:, -1:]       # (batch_size, 1)
 
             # token_type_ids处理
             if token_type_ids is not None:
                 token_type_ids = token_type_ids[:, -1:]
-            
 
-        model_inputs = {
+        attention_mask:torch.Tensor = model_kwargs.get("attention_mask", None)
+        position_ids = model_kwargs.get("position_ids", None)
+        if attention_mask is not None and position_ids is None:
+            # 非batch模式以及position_ids为None
+            position_ids = attention_mask.long().cumsum(dim=-1) - 1
+            position_ids.masked_fill_(attention_mask == 0, 1)
+            
+        return {
             "input_ids": decoder_input_ids,
             "start_pos": step,
+            "attention_mask": attention_mask,
+            "position_ids": position_ids,
+            "token_type_ids": token_type_ids,
         }
-        
-        if token_type_ids is not None:
-            model_inputs['token_type_ids'] = token_type_ids
-            
-        return model_inputs
 
     def _update_model_kwargs_for_generation(
             self,
@@ -301,20 +293,14 @@ class DecGenerationMixin(GenerationMixin):
         model_kwargs['decoder_input_ids'] = decoder_input_ids
         model_kwargs['is_first_forward'] = False
 
+        attention_mask = outputs.attention_mask
+        if attention_mask is not None:
+            # 非batch模式下attention_mask为None
+            model_kwargs['attention_mask'] = torch.cat(
+                [attention_mask, attention_mask.new_ones((attention_mask.shape[0], 1))], dim=-1
+            )
+
         return model_kwargs
-
-    def update_next_tokens(self, next_tokens, step):
-        """更新next_tokens"""
-        # 同一个batch，较长的input在解码前期用自身token
-        cur_pos = step+self.min_input_len
-        if cur_pos >= self.max_input_len:
-            return next_tokens
-
-        next_tokens = torch.where(
-            self.input_mask[:, cur_pos], self.input_ids[:, cur_pos], next_tokens
-        )
-        
-        return next_tokens
 
     def rm_prompt_token_ids(self, decoder_input_ids: torch.LongTensor, input_ids: torch.LongTensor):
         """decode_only模型去掉prompt部分"""

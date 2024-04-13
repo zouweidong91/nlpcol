@@ -7,13 +7,13 @@ import torch
 import torch.nn as nn
 from nlpcol.generation import DecGenerationMixin
 from nlpcol.layers.attention import AttentionOutput, DecAttention
+from nlpcol.layers.embed import GptEmbeddings
 from nlpcol.layers.ffn import FFN
 from nlpcol.layers.layer import LayerNorm
 from torch import Size, Tensor
 
 from ._base import BaseConfig as Config
 from ._base import BaseModel
-
 
 
 class Block(nn.Module):
@@ -75,9 +75,10 @@ class Stack(nn.Module):
         input_ids:Tensor, 
         token_type_ids:Tensor, 
         attention_mask:Tensor=None,
+        position_ids:Tensor=None,
         start_pos:int=0
     ) -> Tensor:
-        hidden_states = self.embed(input_ids, token_type_ids, start_pos=start_pos)
+        hidden_states = self.embed(input_ids, token_type_ids, position_ids, start_pos=start_pos)
         all_hidden_states = []
 
         for i, layer_module in enumerate(self.layers):
@@ -103,6 +104,7 @@ class CausalLMOutput:
     lm_logits: torch.FloatTensor = None
     last_hidden_state: torch.FloatTensor= None
     hidden_states: Optional[List[torch.FloatTensor]] = None
+    attention_mask: torch.LongTensor=None
 
 
 class Decoder(BaseModel, DecGenerationMixin):
@@ -119,7 +121,7 @@ class Decoder(BaseModel, DecGenerationMixin):
         
         self.tie_weights()
 
-    def get_embed(self, config: Config):
+    def get_embed(self, config: Config) -> GptEmbeddings:
         raise NotImplementedError
 
     def forward(
@@ -127,13 +129,36 @@ class Decoder(BaseModel, DecGenerationMixin):
         input_ids:torch.LongTensor=None,
         token_type_ids:torch.LongTensor=None,
         labels:torch.LongTensor=None,
-        start_pos:int=0 # 训练状态下 start_pos=0
-    ):  
+        attention_mask:torch.LongTensor=None,
+        position_ids:torch.LongTensor=None,
+        start_pos:int=0
+    ): 
+        """_summary_
+
+        Args:
+            attention_mask (torch.LongTensor, optional): 
+                也就是input输入的padding_mask
+                对于decoder-only模型
+                train模式下：
+                    right-padding，attention_mask为None。因为loss计算时，label的padding为-100，会自动忽略掉padding位置
+                infer模式下：
+                    batch模式下为left-padding，每个step在attention时时需要mask掉padding位，attention_mask为非None
+
+
+            position_ids (torch.LongTensor, optional): 
+                batch时generation才传入
+
+            start_pos (int, optional): 
+                训练状态下 start_pos=0
+                推理时，为生成的step步
+
+        """
         # decoder
         dec_output:StackOutput = self.decoder(
             input_ids = input_ids, 
             token_type_ids = token_type_ids, 
-            attention_mask = None,
+            attention_mask = attention_mask,
+            position_ids = position_ids,
             start_pos = start_pos
         )
 
@@ -159,4 +184,5 @@ class Decoder(BaseModel, DecGenerationMixin):
             lm_logits = lm_logits,
             last_hidden_state = dec_output.last_hidden_state,
             hidden_states = dec_output.hidden_states,
+            attention_mask = attention_mask
         )

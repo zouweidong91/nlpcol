@@ -18,9 +18,21 @@ config_path = model_path + "/config.json"
 checkpoint_path = model_path + '/pytorch_model.bin'
 
 # 建立分词器
-tokenizer = Tokenizer(model_path, tokenizer_type='bpe', token_start=None, token_end=None, token_unk="<unk>")
+tokenizer = Tokenizer(
+    model_path, 
+    tokenizer_type='bpe', 
+    token_start=None, 
+    token_end=None, 
+    token_unk="<unk>", 
+    token_pad='<unk>'
+)
 
-model:GptModel = build_transformer_model(checkpoint_path, config_path=config_path, model='GPT')  # 建立模型，加载权重
+model:GptModel = build_transformer_model(
+    checkpoint_path, 
+    config_path=config_path, 
+    model='GPT',
+    extra_config={"pad_token_id": tokenizer.pad_token_id},
+)  # 建立模型，加载权重
 model.eval() # 关掉nn.dropout model.training=False
 model.to(device)
 

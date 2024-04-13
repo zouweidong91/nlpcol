@@ -17,6 +17,20 @@ class LayerTest(unittest.TestCase):
         logger.info(trie.split("hello, my dog is cute."))
         # ['hello, my ', 'dog', ' is cute.']
 
+    def test_transformers_tokenizer(self):
+        from transformers import AutoTokenizer
+        pretraine_dir = '/home/dataset/pretrain_ckpt/t5/mt5-base/'
+        tokenizer = AutoTokenizer.from_pretrained(pretraine_dir)
+        text = ["The <extra_id_0> walks in <extra_id_1> park", "The <extra_id_0> walks"]
+        inputs = tokenizer(
+            text,
+            padding='max_length',  # pading补全max_length， 默认longest
+            max_length=10,
+            return_tensors='pt'  # 返回张量
+        )
+        logger.info(inputs['input_ids'])
+        logger.info(inputs['attention_mask'])
+
 
     def test_bert_tokenizer(self):
         from nlpcol.tokenizers import Tokenizer

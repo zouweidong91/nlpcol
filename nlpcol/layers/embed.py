@@ -31,7 +31,8 @@ class GptEmbeddings(nn.Module):
 
         if position_ids is None:
             position_ids = torch.arange(start_pos+seq_len, dtype=torch.long, device=device).unsqueeze(0).expand(btz, -1)
-            position_ids = position_ids[:, start_pos : start_pos+seq_len] # 解码时位置编码也要根据输入长度截取
+        
+        position_ids = position_ids[:, start_pos: start_pos+seq_len] # 解码时位置编码也要根据输入长度截取
         position_embeddings = self.position_embeddings(position_ids)
 
         # 统一embedding写法 后续模型继承

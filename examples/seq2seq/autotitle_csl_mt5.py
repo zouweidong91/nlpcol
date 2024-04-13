@@ -65,7 +65,7 @@ def generate(text):
     input_ids = torch.tensor([input_ids], device=device)
 
     # logits = model.generate(input_ids, mode='do_sample', top_k=20, top_p=0.9, temperature=0.9)
-    logits = model.generate(input_ids, mode='greedy_search')
+    logits = model.generate(input_ids, mode='greedy_search', max_new_tokens=64)
     # logits = model.generate(input_ids, mode='beam_search', num_beams=4)
 
     logits=logits[:,1:] # 去掉bos

@@ -139,3 +139,10 @@ class BBPETokenizer(BPETokenizer):
         token = "".join(self.byte_encoder[b] for b in token.encode("utf-8"))
         token = self.bpe(token, suffix="")
         return list(token.split(" "))
+
+    def convert_tokens_to_string(self, tokens):
+        """TODO Converts a sequence of tokens (string) in a single string.  Ċ  -> \n"""
+        text = "".join(tokens)
+        text = bytearray([self.byte_decoder[c] for c in text]).decode("utf-8", errors="replace",)
+        return text
+

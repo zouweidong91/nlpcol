@@ -210,11 +210,18 @@ class T5Layer(nn.Module):
     def forward(
         self, 
         hidden_states:Tensor, 
-        attention_mask:Tensor=None, 
+        attention_mask:Tensor=None,   
         encoder_hidden_states:Tensor=None, 
         encoder_attention_mask:Tensor=None,
         start_pos:int=0
     ) -> Tensor:
+        """
+        Args:
+            attention_mask (Tensor, optional): 
+                即输入的padding_mask。
+                encoder端输入有padding信息，为非None
+                decoder端输入没有padding信息，为None
+        """
 
         # self attention
         normed_hidden_states = self.layer_norm(hidden_states)
