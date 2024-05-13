@@ -121,7 +121,7 @@ def generate(text):
 
 
 # 定义训练流程
-optimizer = torch.optim.Adam(model.parameters(), lr=2e-5)
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-5)
 save_path = model_name_gene(train_config, 'bert', 'csl_title')
 trainer = Trainer(model, train_config, optimizer=optimizer, collate_fn=collate_fn)
 

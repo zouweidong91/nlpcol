@@ -100,11 +100,11 @@ class EncAttention(nn.Module):
 # Unilm的attention mask
 class UnilmAttention(EncAttention):
     def get_mask(self, scores:Tensor, key_mask:Tensor, **kwargs):
-        """通过segment_ids获取对应的mask"""
-        segment_ids = kwargs['segment_ids']
-        cumsum_segment_ids = torch.cumsum(segment_ids, dim=1)   # (bs, klen)
+        """通过token_type_ids获取对应的mask"""
+        token_type_ids = kwargs['token_type_ids']
+        cumsum_type_ids = torch.cumsum(token_type_ids, dim=1)   # (bs, klen)
         key_mask = (
-            cumsum_segment_ids.unsqueeze(1) <= cumsum_segment_ids.unsqueeze(2)
+            cumsum_type_ids.unsqueeze(1) <= cumsum_type_ids.unsqueeze(2)
         )                                                       # (bs, klen, klen)
         key_mask = key_mask.unsqueeze(1).long()                 # (bs, 1, klen, klen)
         key_mask = (1.0 - key_mask) * - 10000.0

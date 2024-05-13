@@ -59,7 +59,7 @@ class Config(BaseConfig):
         self.num_layers: int = kwargs.get('num_hidden_layers')
         
         self.pad_token_id: int = kwargs.get('pad_token_id')
-        self.unilm:bool = False  # 是否使用Unilm模式
+        self.unilm:bool = kwargs.get('unilm', False)  # 是否使用Unilm模式
 
         # bert config文件配置
         self.architectures: list = kwargs.get('architectures')
