@@ -126,17 +126,18 @@ class BaseModel(nn.Module):
         """
         return {}
 
+    @property
+    def origin_embedding_keys(self) -> list:
+        """原始模型和token_embedding相关的参数名 keep_token精简embedding用"""
+        return []
+
     def load_variable(self, state_dict:dict, name:str):
         """部分参数如embedding或者pos_embedding需要进行修改
         每个模型要单独实现
         name为原始模型的参数名
         """
         variable = state_dict.pop(name)
-        if name in [  # TODO gpt 在下游模型中各自继承
-            'encoder.embed_tokens.weight',
-            'decoder.embed_tokens.weight',
-            'lm_head.weight',
-        ]:
+        if name in self.origin_embedding_keys:
             return self.load_embedding(variable)
         
         return variable

@@ -14,6 +14,7 @@ import torch.optim as optim
 from nlpcol.callback import Callback
 from nlpcol.config import TrainConfig, WordDir, device
 from nlpcol.model import build_transformer_model
+from nlpcol.models import T5Model
 from nlpcol.tokenizers import SpTokenizer
 from nlpcol.trainer import Trainer
 from nlpcol.utils.snippets import (ListDataset, get_pool_emb,
@@ -50,7 +51,7 @@ tokenizer = SpTokenizer(spm_path, token_start=None, token_end='</s>') # 对分�
 keep_tokens = json.load(open(keep_tokens_path))
 
 
-model = build_transformer_model(
+model:T5Model = build_transformer_model(
     checkpoint_path,
     config_path,
     model='t5',
@@ -68,7 +69,6 @@ def generate(text):
     logits = model.generate(input_ids, mode='greedy_search', max_new_tokens=64)
     # logits = model.generate(input_ids, mode='beam_search', num_beams=4)
 
-    logits=logits[:,1:] # 去掉bos
     predict_label = [tokenizer.decode(i) for i in logits]
     return predict_label[0]
 

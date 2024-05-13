@@ -361,6 +361,10 @@ class T5Model(BaseModel, EncDecGenerationMixin):
             decoder_input_ids[..., 1:] = labels[..., :-1].clone() # 向右偏移一位
             decoder_input_ids[..., 0] = self.config.bos_token_id # 起始位置用padding代表
             
+            # batch模式下，外部数据组装时用-100进行padding，这里再进行替换
+            decoder_input_ids.masked_fill_(decoder_input_ids == -100, self.config.pad_token_id)
+            
+            
         # decoder
         dec_output:T5StackOutput = self.decoder(
             input_ids = decoder_input_ids, 
@@ -389,6 +393,13 @@ class T5Model(BaseModel, EncDecGenerationMixin):
             decoder_hidden_states = dec_output.hidden_states,
         )
 
+    @property
+    def origin_embedding_keys(self) -> list:
+        return [
+            'encoder.embed_tokens.weight',
+            'decoder.embed_tokens.weight',
+            'lm_head.weight',
+        ]
 
     def variable_mapping(self):
         """

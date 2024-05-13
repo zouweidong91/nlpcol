@@ -173,8 +173,9 @@ class Decoder(BaseModel, DecGenerationMixin):
 
         # label shift right
         #   北   京   在   哪   里   在   中   国   </s>      原句
-        #   北   京   在   哪   里   在   中   国           shift_logits
-        # -100 -100 -100 -100   在  中   国   </s>         labels  
+        # -100 -100 -100 -100 -100  在   中   国   </s>      labels  
+        # -100 -100 -100 -100  在   中   国   </s>           shift_labels  
+        #   北   京   在   哪   里   在   中   国             shift_logits
         if labels is not None:
             shift_logits = lm_logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()

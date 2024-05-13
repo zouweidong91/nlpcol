@@ -42,13 +42,10 @@ def get_loss():
     print(labels)
 
     outputs = model(input_ids=input_ids, labels=labels)
-    lm_logits = outputs.lm_logits
-    loss_fn = nn.CrossEntropyLoss()
-    # move labels to correct device to enable PP 计算损失时将所有张量转移到同一设备上
-    labels = labels.to(lm_logits.device)
-    loss = loss_fn(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
+    loss = outputs.loss
     print(loss)
     loss.backward()
+    # tensor(4.2471, grad_fn=<NllLossBackward0>)
     
 
 def generate():
@@ -68,10 +65,7 @@ def generate():
     # ['<extra_id_0>北京,简称 <extra_id_1>。']
 
 
-get_loss()  # tensor(4.2471, grad_fn=<NllLossBackward0>)
+get_loss()
 generate()
-
-
-
 
 
