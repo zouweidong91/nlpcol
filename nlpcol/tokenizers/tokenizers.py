@@ -172,6 +172,7 @@ class Tokenizer(TokenizerBase):
     def __init__(
         self, 
         vocab_or_model_path:str, 
+        token_dict:dict=None,
         do_lower_case=True, 
         do_basic_tokenize=True, 
         do_tokenize_unk=False, 
@@ -182,6 +183,8 @@ class Tokenizer(TokenizerBase):
         参数:
             vocab_or_model_path:
                 词典文件
+            token_dict:
+                外部传入加载好的token_dict
             do_lower_case:
                 是否转换成小写
             do_basic_tokenize:
@@ -196,7 +199,8 @@ class Tokenizer(TokenizerBase):
             self.basic_tokenizer = BasicTokenizer(do_lower_case=do_lower_case, never_split=self.never_split)
 
         if tokenizer_type == "wordpiece":
-            token_dict = load_vocab(vocab_or_model_path)
+            if not token_dict:
+                token_dict = load_vocab(vocab_or_model_path)
             self._tokenizer = WordpieceTokenizer(vocab=token_dict, unk_token=self._token_unk, do_tokenize_unk=do_tokenize_unk)
         elif tokenizer_type == "bpe":
             self._tokenizer = BPETokenizer(vocab_or_model_path)

@@ -6,7 +6,8 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from nlpcol.activations import get_activation
-from nlpcol.layers.attention import AttentionOutput, EncAttention
+from nlpcol.layers.attention import (AttentionOutput, EncAttention,
+                                     UnilmAttention)
 from nlpcol.layers.ffn import FFN
 from nlpcol.layers.layer import LayerNorm
 from torch import Size, Tensor
@@ -58,6 +59,7 @@ class Config(BaseConfig):
         self.num_layers: int = kwargs.get('num_hidden_layers')
         
         self.pad_token_id: int = kwargs.get('pad_token_id')
+        self.unilm:bool = False  # 是否使用Unilm模式
 
         # bert config文件配置
         self.architectures: list = kwargs.get('architectures')
@@ -124,14 +126,14 @@ class BertLayer(nn.Module):
     """
     def __init__(self, config: Config):
         super().__init__()
-        self.self_attention = EncAttention(config)
+        self.self_attention = UnilmAttention(config) if config.unilm else EncAttention(config)
         self.attention_output = AttentionOutput(config)
         self.ffn = FFN(config)
     
-    def forward(self, hidden_states:Tensor, attention_mask:Tensor) -> Tensor:
+    def forward(self, hidden_states:Tensor, attention_mask:Tensor, **kwargs) -> Tensor:
         # self attention
         context_layer = self.self_attention(
-            hidden_states, hidden_states, hidden_states, attention_mask 
+            hidden_states, hidden_states, hidden_states, attention_mask, **kwargs
         )
         attention_output = self.attention_output(context_layer, hidden_states)
 
@@ -151,13 +153,13 @@ class BertEncoder(nn.Module):
         super().__init__()
         self.layers = nn.ModuleList([BertLayer(config) for _ in range(config.num_layers)])
 
-    def forward(self, hidden_states:Tensor, attention_mask:Tensor) -> BertEncoderOutput:
+    def forward(self, hidden_states:Tensor, attention_mask:Tensor, **kwargs) -> BertEncoderOutput:
         """这里控制整个enceder层的输出格式, 暂时只输出最后一个隐藏藏 TODO
         """
         all_hidden_states = [hidden_states]
 
         for i, layer_module in enumerate(self.layers):
-            hidden_states = layer_module(hidden_states, attention_mask)
+            hidden_states = layer_module(hidden_states, attention_mask, **kwargs)
             all_hidden_states.append(hidden_states)
 
         return BertEncoderOutput(
@@ -269,7 +271,7 @@ class BertModel(BaseModel):
             attention_mask = (input_ids != self.config.pad_token_id).long() # bert默认0为mask_value
 
         input_embedding = self.embed(input_ids, token_type_ids, position_ids)
-        encoder_output:BertEncoderOutput = self.encoder(input_embedding, attention_mask)
+        encoder_output:BertEncoderOutput = self.encoder(input_embedding, attention_mask, token_type_ids=token_type_ids)
         hidden_states = encoder_output.last_hidden_state
         pooled_output, nsp_scores, mlm_scores = None, None, None
 

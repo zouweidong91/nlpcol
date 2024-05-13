@@ -26,6 +26,11 @@ def build_transformer_model(checkpoint_path:str=None, config_path:str=None, mode
             step2: extra_config，添加或覆盖config参数
             step3: Config实例化
             step4: BaseModel中对部分参数进行更新，update_config
+
+        kwargs: BaseModel实例化阶段用到的参数
+            skip_init(bool): 默认False 是否跳过初始化 
+            keep_tokens(list): 默认None 精简的token
+        
     """
     config = load_config(config_path)
     config.update(extra_config)

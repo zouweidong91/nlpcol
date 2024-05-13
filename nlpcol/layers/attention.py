@@ -10,6 +10,11 @@ from nlpcol.models.base import BaseConfig as Config
 from torch import Size, Tensor
 
 
+# 语言模型的核心就是，在训练或者推理时，哪些信息可以看见，哪些看不见。主要依靠attention时mask来控制
+# attention的各种mask策略：
+# 从语言模型到Seq2Seq：Transformer如戏，全靠Mask
+# https://spaces.ac.cn/archives/6933 
+
 # encoder 模型
 class EncAttention(nn.Module):
     def __init__(self, config: Config):
@@ -45,7 +50,7 @@ class EncAttention(nn.Module):
         key_mask = (1.0 - key_mask) * - 10000.0 # 传入的mask的非padding部分为1, padding部分为0
         return key_mask
 
-    def get_mask(self, scores:Tensor, key_mask:Tensor):
+    def get_mask(self, scores:Tensor, key_mask:Tensor, **kwargs):
         return self.get_padding_mask(key_mask)
 
     def score_scale(self, scores:Tensor) -> Tensor:
@@ -55,7 +60,7 @@ class EncAttention(nn.Module):
     def applay_att_score_bias(self, scores:Tensor) -> Tensor:
         return scores
 
-    def core_attention(self, q, k, v, key_mask):
+    def core_attention(self, q, k, v, key_mask, **kwargs):
         # 形状变换
         q = self.shape(q)                                       # (bs, n_heads, qlen, dim_per_head)
         k = self.shape(k)                                       # (bs, n_heads, klen, dim_per_head)
@@ -67,7 +72,7 @@ class EncAttention(nn.Module):
         scores = self.score_scale(scores)                       # (bs, n_heads, qlen, klen)
         scores = self.applay_att_score_bias(scores)             # (bs, n_heads, qlen, klen)
 
-        key_mask = self.get_mask(scores, key_mask)
+        key_mask = self.get_mask(scores, key_mask, **kwargs)
         scores = scores + key_mask                              # (bs, n_heads, qlen, klen)
         
         # scores归一化到0-1
@@ -77,7 +82,7 @@ class EncAttention(nn.Module):
         context = self.unshape(context)                         # (bs, qlen, d_model)
         return context
 
-    def forward(self, query, key, value, key_mask):
+    def forward(self, query, key, value, key_mask, **kwargs):
         """
             key_mask (_type_): (bs, klen)
         """
@@ -86,9 +91,24 @@ class EncAttention(nn.Module):
         k = self.k(key)                                         # (bs, klen, d_model)
         v = self.v(value)                                       # (bs, klen, d_model)
 
-        context = self.core_attention(q, k, v, key_mask)        # (bs, qlen, d_model)
+        context = self.core_attention(
+            q, k, v, key_mask, **kwargs
+        )                                                       # (bs, qlen, d_model)
         return context
         
+
+# Unilm的attention mask
+class UnilmAttention(EncAttention):
+    def get_mask(self, scores:Tensor, key_mask:Tensor, **kwargs):
+        """通过segment_ids获取对应的mask"""
+        segment_ids = kwargs['segment_ids']
+        cumsum_segment_ids = torch.cumsum(segment_ids, dim=1)   # (bs, klen)
+        key_mask = (
+            cumsum_segment_ids.unsqueeze(1) <= cumsum_segment_ids.unsqueeze(2)
+        )                                                       # (bs, klen, klen)
+        key_mask = key_mask.unsqueeze(1).long()                 # (bs, 1, klen, klen)
+        key_mask = (1.0 - key_mask) * - 10000.0
+        return key_mask
 
 
 # decoder 模型

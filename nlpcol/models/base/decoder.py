@@ -171,7 +171,10 @@ class Decoder(BaseModel, DecGenerationMixin):
         lm_logits: Tensor = self.lm_head(hidden_state)   # (bsz, seq_len, vocab_size)
         loss = None
 
-        # label shift right  
+        # label shift right
+        #   北   京   在   哪   里   在   中   国   </s>      原句
+        #   北   京   在   哪   里   在   中   国           shift_logits
+        # -100 -100 -100 -100   在  中   国   </s>         labels  
         if labels is not None:
             shift_logits = lm_logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()

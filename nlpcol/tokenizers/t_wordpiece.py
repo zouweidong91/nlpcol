@@ -6,7 +6,7 @@ from .helpers import whitespace_tokenize
 # 编码方法：将文本切分成词，对每个词在词表中进行最大前向匹配
 # 经典模型：BERT及其系列DistilBERT，MobileBERT等
 
-class WordpieceTokenizer(object):
+class WordpieceTokenizer:
     """Runs WordPiece tokenization."""
 
     def __init__(self, vocab, unk_token="[UNK]", max_input_chars_per_word=100, do_tokenize_unk=False):

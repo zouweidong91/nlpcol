@@ -8,7 +8,7 @@ nlpcol(nlp collction)： 一个简单的nlp基础模型集合。
 - 训练日志优化
 - 常用优化器实现 
 - xlnet unilm bart 
-- llm: llama chatgpt 
+- llm: llama chatgpt
 - config的加载方式  extra_config
 
 

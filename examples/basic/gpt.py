@@ -59,9 +59,9 @@ def get_loss():
     # 哈 哈 哈 哈 哈 在 中 国 </s>      labels  哈为-100
 
     # 模型内部做shift right
-    # 北 京 在 哪 里 在 中 国 </s>      原句
-    # 北 京 在 哪 里 在 中 国           shift_logits
-    # 哈 哈 哈 哈 在 中 国 </s>         labels  哈为-100
+    #   北   京   在   哪   里   在   中   国   </s>      原句
+    #   北   京   在   哪   里   在   中   国           shift_logits
+    # -100 -100 -100 -100   在  中   国   </s>         labels
 
     cat = tokenizer.encode("hello, my dog is cute. i'm sorry, i didn't mean to make")[0]
     cat = torch.tensor([cat]).to(device)
@@ -69,6 +69,7 @@ def get_loss():
     input_ids = cat.clone()
     labels = cat.clone()
     labels[:, :len(tokens)] = -100 # 真正ipt的位置不参与损失
+    labels = labels.masked_fill(labels == tokenizer.pad_token_id, -100)
 
     print(input_ids)
     print(labels)

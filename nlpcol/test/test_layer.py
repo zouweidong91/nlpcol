@@ -5,9 +5,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from nlpcol.layers.layer import GlobalPointer, RMSNorm
-from nlpcol.layers.pe import (RotaryPositionalEmbedding,
-                              SinusoidalPositionalEmbedding,
-                              RelativePositionalT5)
+from nlpcol.layers.pe import (RelativePositionalT5, RotaryPositionalEmbedding,
+                              SinusoidalPositionalEmbedding)
+from nlpcol.utils import logger
 from torch import Size, Tensor
 
 random_seed = 42
@@ -65,6 +65,37 @@ class LayerTest(unittest.TestCase):
         # 打印结果
         print("注意力分数矩阵（logits）:")
         print(logits)
+    
+    def test_attention_bias(self):
+        # attention_bias 用以控制注意力机制中，不同段落能关注到哪些信息
+        # 假设我们有一个长度为5的序列，其中包含两个不同的段落  第一个段落包含3个元素，第二个段落包含2个元素
+        segment_ids = torch.tensor([[
+            0, 0, 0,   # 第一个段落的ID，连续3个0
+            1, 1      # 第二个段落的ID，连续2个1
+        ]])
+
+        # 计算segment_ids在dim=1上的累积和
+        cumsum_segment_ids = torch.cumsum(segment_ids, dim=1)
+        # tensor([[0, 0, 0, 1, 2]])
+
+        # 将累积和张量扩展为三维张量，并进行比较操作
+        attention_bias = (cumsum_segment_ids.unsqueeze(1) <= cumsum_segment_ids.unsqueeze(2))
+        logger.info(cumsum_segment_ids.unsqueeze(1))
+        # tensor([[[0, 0, 0, 1, 2]]])
+
+        logger.info(cumsum_segment_ids.unsqueeze(2))
+        # tensor([[[0],
+        #         [0],
+        #         [0],
+        #         [1],
+        #         [2]]])
+
+        logger.info(attention_bias)
+        # tensor([[[1, 1, 1, 0, 0],
+        #         [1, 1, 1, 0, 0],
+        #         [1, 1, 1, 0, 0],
+        #         [1, 1, 1, 1, 0],
+        #         [1, 1, 1, 1, 1]]])
 
 
     def test_GlobalPointer(self):
