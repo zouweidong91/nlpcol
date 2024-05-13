@@ -8,7 +8,6 @@ import os
 
 import torch
 import torch.nn as nn
-import torch.optim as optim
 from nlpcol.callback import Callback
 from nlpcol.config import TrainConfig
 from nlpcol.model import build_transformer_model
@@ -84,8 +83,14 @@ def collate_fn(batch):
 
     batch_token_ids = torch.tensor(sequence_padding(batch_token_ids), dtype=torch.long, device=device)
     batch_segment_ids = torch.tensor(sequence_padding(batch_segment_ids), dtype=torch.long, device=device)
-    return [batch_token_ids, batch_segment_ids], [batch_token_ids, batch_segment_ids]
-
+    labels = batch_token_ids * batch_segment_ids # segment_ids，刚好指示了要预测的部分
+    labels = labels.masked_fill(labels == tokenizer.pad_token_id, -100) # padding_id替换为-100，不参与loss计算
+    return {
+        "input_ids": batch_token_ids,
+        "token_type_ids": batch_segment_ids,
+        "labels": labels,
+    }
+    
 
 train_dataset = MyDataset('/home/dataset/corpus/seq2seq/summary/csl_title_public/csl_title_train.json')
 valid_dataset = MyDataset('/home/dataset/corpus/seq2seq/summary/csl_title_public/csl_title_dev.json')
@@ -115,57 +120,35 @@ def generate(text):
     return predict_label[0]
 
 
-
-class CrossEntropyLoss(nn.CrossEntropyLoss):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def forward(self, outputs, target):
-        '''
-        y_pred: [btz, seq_len, hdsz]
-        targets: y_true, y_segment
-        '''
-        _, y_pred = outputs
-        y_true, y_mask = target
-        y_true = y_true[:, 1:]# 目标token_ids
-        y_mask = y_mask[:, 1:]  # segment_ids，刚好指示了要预测的部分
-        y_pred = y_pred[:, :-1, :]  # 预测序列，错开一位
-        
-        y_pred = y_pred.reshape(-1, y_pred.shape[-1])
-        y_true = (y_true*y_mask).flatten()
-        loss = super().forward(y_pred, y_true)
-        print(loss)
-        return loss
-
 # 定义训练流程
 optimizer = torch.optim.Adam(model.parameters(), lr=2e-5)
-loss_fn = CrossEntropyLoss()
 save_path = model_name_gene(train_config, 'bert', 'csl_title')
-trainer = Trainer(model, train_config, loss_fn, optimizer, collate_fn)
-
+trainer = Trainer(model, train_config, optimizer=optimizer, collate_fn=collate_fn)
 
 
 class Evaluator(Callback):
     """评估与保存
     """
-    def __init__(self):
+    def __init__(self, trainer:Trainer, save_path:str):
         self.rouge = Rouge()
         self.smooth = SmoothingFunction().method1
         self.best_bleu = 0.
+        self.trainer = trainer
+        self.save_path = save_path
 
     def on_epoch_end(self, steps, epoch, logs=None):
         just_show()
-        metrics = self.evaluate(valid_dataset.data)  # 评测模型
+        metrics = self.evaluate()  # 评测模型
         if metrics['bleu'] > self.best_bleu:
             self.best_bleu = metrics['bleu']
-            # model.save_weights('./best_model.pt')  # 保存模型
+            self.trainer.save_weights(self.save_path)
         metrics['best_bleu'] = self.best_bleu
         print('valid_data:', metrics)
     
-    def evaluate(self, data, topk=1):
+    def evaluate(self,):
         total = 0
         rouge_1, rouge_2, rouge_l, bleu = 0, 0, 0, 0
-        for title, content in tqdm(data):
+        for title, content in tqdm(valid_dataset):
             total += 1
             title = ' '.join(title).lower()
             pred_title = ' '.join(generate(content)).lower()
@@ -187,8 +170,8 @@ def just_show():
 
 
 if __name__ == '__main__':
+    # just_show()
     evaluator = Evaluator(trainer, save_path)
-    print(u'生成标题:', generate(u'中国的首都是extra0京'))  # 和huggingface的结果一致 
     # '<extra_id_0>北京 <extra_id_1>北京  <extra_id_2>北京 首都'
 
     trainer.train(train_dataset, callbacks=[evaluator])

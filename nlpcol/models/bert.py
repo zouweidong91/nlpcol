@@ -193,9 +193,9 @@ class BertMLM(nn.Module):
         self.act = get_activation(config.hidden_act)
         self.layer_norm = LayerNorm(config.d_model, eps=config.layer_norm_eps)
 
+        # mlm解码阶段需要做需要权重共享
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
         self.lm_head.bias = nn.Parameter(torch.zeros(config.vocab_size))
-        # self.decoder.bias = self.bias
 
     def forward(self, hidden_states: Tensor) -> Tensor:
         """
@@ -217,6 +217,7 @@ class BertNsp(nn.Module):
 
 @dataclass
 class BertOutput:
+    loss: torch.FloatTensor = None
     pooled_output: torch.FloatTensor = None
     nsp_scores: torch.FloatTensor = None
     mlm_scores: torch.FloatTensor = None
@@ -258,12 +259,21 @@ class BertModel(BaseModel):
         if self.with_mlm:
             return self.mlm.lm_head
 
+    @property
+    def origin_embedding_keys(self) -> list:
+        return [
+            'bert.embeddings.word_embeddings.weight',
+            'cls.predictions.decoder.weight',
+            'cls.predictions.bias',
+        ]
+
     def forward(
         self,
         input_ids: Optional[Tensor],
         token_type_ids: Optional[Tensor] = None,
         position_ids: Optional[Tensor] = None,
         attention_mask: Optional[Tensor] = None,
+        labels: Optional[Tensor]=None, # unilm任务生成模式下使用
     ):
         # ========================= attention_mask =========================
         if attention_mask is None:
@@ -273,18 +283,24 @@ class BertModel(BaseModel):
         input_embedding = self.embed(input_ids, token_type_ids, position_ids)
         encoder_output:BertEncoderOutput = self.encoder(input_embedding, attention_mask, token_type_ids=token_type_ids)
         hidden_states = encoder_output.last_hidden_state
-        pooled_output, nsp_scores, mlm_scores = None, None, None
+        pooled_output, nsp_scores, mlm_scores, loss = None, None, None, None
 
         if self.with_pool:
             pooled_output = self.pooler(hidden_states)
         if self.with_pool and self.nsp:
             nsp_scores = self.nsp(pooled_output)
+
         if self.with_mlm:
-            mlm_scores = self.mlm(hidden_states)
-            mlm_activation = get_activation('softmax')
-            mlm_scores = mlm_activation(mlm_scores)
+            mlm_scores:Tensor = self.mlm(hidden_states)
+            if labels is not None: # unilm任务
+                shift_logits = mlm_scores[..., :-1, :].contiguous()
+                shift_labels = labels[..., 1:].contiguous()
+                
+                loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
+                loss = loss_fn(shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
 
         return BertOutput(
+            loss = loss,
             pooled_output = pooled_output,
             nsp_scores = nsp_scores,
             mlm_scores = mlm_scores,
