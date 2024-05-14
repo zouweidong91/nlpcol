@@ -149,7 +149,7 @@ class DecAttention(EncAttention):
 
         if key_mask is not None: # infer模式时
             padding_mask = self.get_padding_mask(key_mask)
-            mask = mask + padding_mask  # += 运算符用在此处，回报shape不匹配
+            mask = mask + padding_mask  # += 运算符用在此处，会报shape不匹配
 
         return mask
 

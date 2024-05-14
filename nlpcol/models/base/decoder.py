@@ -65,20 +65,16 @@ class StackOutput:
 
 class Stack(nn.Module):
     """多个Block的叠加"""
-    def __init__(self, config: Config, embed:nn.Module):
+    def __init__(self, config: Config):
         super().__init__()
-        self.embed = embed
         self.layers = nn.ModuleList([Block(config) for _ in range(config.num_layers)])
         
     def forward(
         self, 
-        input_ids:Tensor, 
-        token_type_ids:Tensor, 
+        hidden_states:Tensor, 
         attention_mask:Tensor=None,
-        position_ids:Tensor=None,
         start_pos:int=0
     ) -> Tensor:
-        hidden_states = self.embed(input_ids, token_type_ids, position_ids, start_pos=start_pos)
         all_hidden_states = []
 
         for i, layer_module in enumerate(self.layers):
@@ -112,7 +108,7 @@ class Decoder(BaseModel, DecGenerationMixin):
         super().__init__(config, **kwargs)
         
         self.embed = self.get_embed(config)
-        self.decoder = Stack(config, self.embed)
+        self.decoder = Stack(config)
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
         self.has_final_ln = config.has_final_layernorm
 
@@ -153,12 +149,13 @@ class Decoder(BaseModel, DecGenerationMixin):
                 推理时，为生成的step步
 
         """
+        # embed
+        hidden_states = self.embed(input_ids, token_type_ids, position_ids, start_pos=start_pos)
+
         # decoder
         dec_output:StackOutput = self.decoder(
-            input_ids = input_ids, 
-            token_type_ids = token_type_ids, 
+            hidden_states = hidden_states, 
             attention_mask = attention_mask,
-            position_ids = position_ids,
             start_pos = start_pos
         )
 

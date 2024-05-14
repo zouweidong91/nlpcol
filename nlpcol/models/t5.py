@@ -46,32 +46,32 @@ from .base import BaseConfig, BaseModel
 
 """
 {
-  "_name_or_path": "/home/patrick/hugging_face/t5/mt5-base",
-  "architectures": [
-    "MT5ForConditionalGeneration"
-  ],
-  "d_ff": 2048,
-  "d_kv": 64,
-  "d_model": 768,
-  "decoder_start_token_id": 0,
-  "dropout_rate": 0.1,
-  "eos_token_id": 1,
-  "feed_forward_proj": "gated-gelu",
-  "initializer_factor": 1.0,
-  "is_encoder_decoder": true,
-  "layer_norm_epsilon": 1e-06,
-  "model_type": "mt5",
-  "num_decoder_layers": 12,
-  "num_heads": 12,
-  "num_layers": 12,
-  "output_past": true,
-  "pad_token_id": 0,
-  "relative_attention_num_buckets": 32,
-  "tie_word_embeddings": false,
-  "tokenizer_class": "T5Tokenizer",
-  "transformers_version": "4.10.0.dev0",
-  "use_cache": true,
-  "vocab_size": 250112
+    "_name_or_path": "/home/patrick/hugging_face/t5/mt5-base",
+    "architectures": [
+        "MT5ForConditionalGeneration"
+    ],
+    "d_ff": 2048,
+    "d_kv": 64,
+    "d_model": 768,
+    "decoder_start_token_id": 0,
+    "dropout_rate": 0.1,
+    "eos_token_id": 1,
+    "feed_forward_proj": "gated-gelu",
+    "initializer_factor": 1.0,
+    "is_encoder_decoder": true,
+    "layer_norm_epsilon": 1e-06,
+    "model_type": "mt5",
+    "num_decoder_layers": 12,
+    "num_heads": 12,
+    "num_layers": 12,
+    "output_past": true,
+    "pad_token_id": 0,
+    "relative_attention_num_buckets": 32,
+    "tie_word_embeddings": false,
+    "tokenizer_class": "T5Tokenizer",
+    "transformers_version": "4.10.0.dev0",
+    "use_cache": true,
+    "vocab_size": 250112
 }
 """
 
@@ -254,9 +254,8 @@ class T5Stack(nn.Module):
     """
     has_relative_attention_bias 只有第一层的selfAtten才需要相对位置编码
     """
-    def __init__(self, config: Config, embed:nn.Embedding):
+    def __init__(self, config: Config):
         super().__init__()
-        self.embed = embed
         self.layers = nn.ModuleList(
             [T5Layer(config, has_relative_attention_bias=bool(i==0)) for i in range(config.num_layers)]
         )
@@ -270,13 +269,12 @@ class T5Stack(nn.Module):
 
     def forward(
         self, 
-        input_ids:Tensor, 
+        hidden_states:Tensor, 
         attention_mask:Tensor=None,
         encoder_hidden_states:Tensor=None, 
         encoder_attention_mask:Tensor=None,
         start_pos:int=0
     ) -> Tensor:
-        hidden_states = self.embed(input_ids)
 
         all_hidden_states = []
 
@@ -321,11 +319,11 @@ class T5Model(BaseModel, EncDecGenerationMixin):
 
         enc_config = copy.deepcopy(config)
         enc_config.is_decoder = False
-        self.encoder = T5Stack(enc_config, self.embed)
+        self.encoder = T5Stack(enc_config)
 
         dec_config = copy.deepcopy(config)
         dec_config.is_decoder = True
-        self.decoder = T5Stack(dec_config, self.embed)
+        self.decoder = T5Stack(dec_config)
 
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
@@ -346,7 +344,8 @@ class T5Model(BaseModel, EncDecGenerationMixin):
             attention_mask = (input_ids != self.config.pad_token_id).long()
         
         if encoder_outputs is None: # 训练或者第一次推理时才执行
-            enc_output:T5StackOutput = self.encoder(input_ids, attention_mask, start_pos = 0)
+            hidden_states_enc = self.embed(input_ids)
+            enc_output:T5StackOutput = self.encoder(hidden_states_enc, attention_mask, start_pos = 0)
         else:
             enc_output = T5StackOutput(
                 last_hidden_state=encoder_outputs, 
@@ -364,10 +363,10 @@ class T5Model(BaseModel, EncDecGenerationMixin):
             # batch模式下，外部数据组装时用-100进行padding，这里再进行替换
             decoder_input_ids.masked_fill_(decoder_input_ids == -100, self.config.pad_token_id)
             
-            
         # decoder
+        hidden_states_dec = self.embed(decoder_input_ids)
         dec_output:T5StackOutput = self.decoder(
-            input_ids = decoder_input_ids, 
+            hidden_states = hidden_states_dec, 
             attention_mask = None, # 后续生成下三角矩阵
             encoder_hidden_states = enc_output.last_hidden_state,
             encoder_attention_mask = attention_mask,
@@ -395,9 +394,9 @@ class T5Model(BaseModel, EncDecGenerationMixin):
 
     @property
     def origin_embedding_keys(self) -> list:
+        """原始模型和token_embedding相关的参数名 keep_token精简embedding用"""
         return [
-            'encoder.embed_tokens.weight',
-            'decoder.embed_tokens.weight',
+            'shared.weight',
             'lm_head.weight',
         ]
 
@@ -406,8 +405,7 @@ class T5Model(BaseModel, EncDecGenerationMixin):
         不同代码参数命名不同，需要做参数映射   new_key: old_key
         """
         mapping = {
-            "encoder.embed.token_embeddings.weight": "encoder.embed_tokens.weight",
-            "decoder.embed.token_embeddings.weight": "decoder.embed_tokens.weight",
+            "embed.token_embeddings.weight": "shared.weight",
             "encoder.layers.0.self_attention.relative_attention_bias.weight": "encoder.block.0.layer.0.SelfAttention.relative_attention_bias.weight",
             "decoder.layers.0.self_attention.relative_attention_bias.weight": "decoder.block.0.layer.0.SelfAttention.relative_attention_bias.weight",
         }
