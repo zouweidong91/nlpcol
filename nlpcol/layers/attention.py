@@ -38,7 +38,7 @@ class EncAttention(nn.Module):
         bs = x.shape[0]
         return x.transpose(1, 2).contiguous().view(bs, -1, self.n_heads * self.dim_per_head)
 
-    def get_padding_mask(self, key_mask:Tensor):
+    def get_padding_mask(self, padding_mask:Tensor):
         # 目的是为了适配多头注意力机制，[batch_size, to_seq_length] -> [batch_size, 1, 1, to_seq_length]
         # 广播到[batch_size, num_heads, from_seq_length, to_seq_length]尺寸
         # bert源码中注明不考虑from_tensor的mask。因为在下游任务如ner中，也会对超出input_ids的部分忽略处理。
@@ -46,12 +46,10 @@ class EncAttention(nn.Module):
         # don't actually care if we attend *from* padding tokens (only *to* padding)
         # tokens so we create a tensor of all ones.
         # enc_self_att, dec_cross_att
-        key_mask = key_mask.unsqueeze(1).unsqueeze(2)           # (bs, None, None, klen)
-        key_mask = (1.0 - key_mask) * - 10000.0 # 传入的mask的非padding部分为1, padding部分为0
-        return key_mask
+        return padding_mask.unsqueeze(1).unsqueeze(2)           # (bs, None, None, klen)
 
-    def get_mask(self, scores:Tensor, key_mask:Tensor, **kwargs):
-        return self.get_padding_mask(key_mask)
+    def get_mask(self, padding_mask:Tensor, **kwargs):
+        return self.get_padding_mask(padding_mask)
 
     def score_scale(self, scores:Tensor) -> Tensor:
         # atten_score是否缩放
@@ -60,7 +58,7 @@ class EncAttention(nn.Module):
     def applay_att_score_bias(self, scores:Tensor) -> Tensor:
         return scores
 
-    def core_attention(self, q, k, v, key_mask, **kwargs):
+    def core_attention(self, q, k, v, padding_mask, **kwargs):
         # 形状变换
         q = self.shape(q)                                       # (bs, n_heads, qlen, dim_per_head)
         k = self.shape(k)                                       # (bs, n_heads, klen, dim_per_head)
@@ -72,7 +70,8 @@ class EncAttention(nn.Module):
         scores = self.score_scale(scores)                       # (bs, n_heads, qlen, klen)
         scores = self.applay_att_score_bias(scores)             # (bs, n_heads, qlen, klen)
 
-        key_mask = self.get_mask(scores, key_mask, **kwargs)
+        key_mask = self.get_mask(scores=scores, padding_mask=padding_mask, **kwargs)
+        key_mask = (1.0 - key_mask) * - 10000.0
         scores = scores + key_mask                              # (bs, n_heads, qlen, klen)
         
         # scores归一化到0-1
@@ -82,9 +81,10 @@ class EncAttention(nn.Module):
         context = self.unshape(context)                         # (bs, qlen, d_model)
         return context
 
-    def forward(self, query, key, value, key_mask, **kwargs):
+    def forward(self, query, key, value, padding_mask, **kwargs):
         """
-            key_mask (_type_): (bs, klen)
+            padding_mask (_type_): (bs, klen)
+            传入的mask的非padding部分为1, padding部分为0
         """
         # 线性变换
         q = self.q(query)                                       # (bs, qlen, d_model)
@@ -92,24 +92,10 @@ class EncAttention(nn.Module):
         v = self.v(value)                                       # (bs, klen, d_model)
 
         context = self.core_attention(
-            q, k, v, key_mask, **kwargs
+            q, k, v, padding_mask, **kwargs
         )                                                       # (bs, qlen, d_model)
         return context
         
-
-# Unilm的attention mask
-class UnilmAttention(EncAttention):
-    def get_mask(self, scores:Tensor, key_mask:Tensor, **kwargs):
-        """通过token_type_ids获取对应的mask"""
-        token_type_ids = kwargs['token_type_ids']
-        cumsum_type_ids = torch.cumsum(token_type_ids, dim=1)   # (bs, klen)
-        key_mask = (
-            cumsum_type_ids.unsqueeze(1) <= cumsum_type_ids.unsqueeze(2)
-        )                                                       # (bs, klen, klen)
-        key_mask = key_mask.unsqueeze(1).long()                 # (bs, 1, klen, klen)
-        key_mask = (1.0 - key_mask) * - 10000.0
-        return key_mask
-
 
 # decoder 模型
 class DecAttention(EncAttention):
@@ -137,19 +123,15 @@ class DecAttention(EncAttention):
         key_mask = torch.tril(
             torch.ones(klen, klen, dtype=torch.long, device=scores.device), diagonal=0
         )
-        # (batch_size, n_heads, klen, klen)
         key_mask = key_mask.unsqueeze(0).unsqueeze(1)               # (bs, n_heads, klen, klen)
         key_mask = key_mask[:, :, -qlen:, :]
-
-        key_mask = (1.0 - key_mask) * - 10000.0     # 传入的mask的非padding部分为1, padding部分为0
         return key_mask
 
-    def get_mask(self, scores:Tensor, key_mask:Tensor):
+    def get_mask(self, scores:Tensor, padding_mask:Tensor, **kwargs):
         mask = self.get_lm_mask(scores)
 
-        if key_mask is not None: # infer模式时
-            padding_mask = self.get_padding_mask(key_mask)
-            mask = mask + padding_mask  # += 运算符用在此处，会报shape不匹配
+        if padding_mask is not None: # infer模式时
+            mask = mask * self.get_padding_mask(padding_mask)
 
         return mask
 
@@ -166,7 +148,7 @@ class DecAttention(EncAttention):
 
         return keys.to(key), values.to(value)
 
-    def forward(self, query, key, value, key_mask:Tensor, start_pos:int):
+    def forward(self, query, key, value, padding_mask:Tensor, start_pos:int, **kwargs):
         # query, key, value: [bsz, seqlen, head_size] 
         # start_pos: Starting position for caching.
         q = self.q(query)
@@ -178,8 +160,31 @@ class DecAttention(EncAttention):
         else:
             k, v = self.project(query, key, value, start_pos)
     
-        context = self.core_attention(q, k, v, key_mask)
+        context = self.core_attention(q, k, v, padding_mask, **kwargs)
         return context
+
+
+# Unilm的attention mask
+class UnilmAttention(DecAttention):
+    def get_unilm_mask(self, token_type_ids:Tensor, **kwargs):
+        """定义下三角矩阵的atten_mask， 语言模型用
+        scores: (bs, n_heads, qlen, klen)
+        """
+        cumsum_type_ids = torch.cumsum(token_type_ids, dim=1)       # (bs, klen)
+        unilm_mask = (
+            cumsum_type_ids.unsqueeze(1) <= cumsum_type_ids.unsqueeze(2)
+        )                                                           # (bs, klen, klen)
+        unilm_mask = unilm_mask.unsqueeze(1).long()                 # (bs, 1, klen, klen)
+        return unilm_mask
+
+    def get_mask(self, padding_mask:Tensor, **kwargs):
+        """通过token_type_ids获取对应的mask"""
+        mask = self.get_unilm_mask(**kwargs)
+
+        if padding_mask is not None: # infer模式时
+            mask = mask * self.get_padding_mask(padding_mask)
+
+        return mask
 
 
 # encoder-decoder 模型
@@ -197,14 +202,16 @@ class EncDecAttention(DecAttention):
         self.is_self_atten = is_self_atten
 
 
-    def get_mask(self, scores:Tensor, key_mask:Tensor):
+    def get_mask(self, scores:Tensor, padding_mask:Tensor, **kwargs):
+        """_summary_
+
+        Args:
+            scores (Tensor): (bs, n_heads, qlen, klen)
+            padding_mask (Tensor): (bs, klen)
         """
-        scores: [batch_size, num_heads, from_seq_len, to_seq_len]
-        key_mask: [batch_size, to_seq_length]
-        """
-        if key_mask is not None:
+        if padding_mask is not None:
             # enc_self_atten  dec_cross_atten
-            return self.get_padding_mask(key_mask)
+            return self.get_padding_mask(padding_mask)
         else:
             # dec_self_atten
             return self.get_lm_mask(scores)
