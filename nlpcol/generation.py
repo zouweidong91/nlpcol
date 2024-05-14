@@ -52,7 +52,7 @@ class GenerationMixin:
 
         for step in range(model_kwargs['max_new_tokens']):
             model_inputs:dict = self.prepare_inputs_for_generation(step, input_ids, **model_kwargs)
-            outputs = self(**model_inputs)    # 获取dec端的输出
+            outputs:CausalLMOutput = self(**model_inputs)    # 获取dec端的输出
 
             next_token_logits = outputs.lm_logits[:, -1, :] # 去最后一步的预测结果 (bs, vocab_size)
             next_tokens = getattr(self, mode)(next_token_logits, **model_kwargs) # (bs)
@@ -251,6 +251,13 @@ class DecGenerationMixin(GenerationMixin):
         self.prompt_length = input_ids.size(1)
         return input_ids
 
+    def update_token_type_ids(self, token_type_ids, *args):
+        if token_type_ids is None:
+            return None
+        else:
+            # 部分gpt模型有token_type_ids
+            return token_type_ids[:, -1:]
+
     def prepare_inputs_for_generation(
         self,
         step: int,
@@ -262,12 +269,9 @@ class DecGenerationMixin(GenerationMixin):
     ) -> dict:
         """用kv_cache时，只需要取当前时刻的token_id即可"""
         if not is_first_forward:
-            step += self.prompt_length-1
+            token_type_ids = self.update_token_type_ids(token_type_ids, decoder_input_ids[:, -step:])  # token_type_ids处理
             decoder_input_ids = decoder_input_ids[:, -1:]       # (batch_size, 1)
-
-            # token_type_ids处理
-            if token_type_ids is not None:
-                token_type_ids = token_type_ids[:, -1:]
+            step += self.prompt_length-1
 
         attention_mask:torch.Tensor = model_kwargs.get("attention_mask", None)
         position_ids = model_kwargs.get("position_ids", None)
@@ -306,6 +310,25 @@ class DecGenerationMixin(GenerationMixin):
         """decode_only模型去掉prompt部分"""
         decoder_input_ids = [ids[len(input_ids[i]):] for i, ids in enumerate(decoder_input_ids.tolist())]
         return decoder_input_ids
+
+
+# TODO 解码器外部如何轻松干预
+class UnilmGenerationMixin(DecGenerationMixin):
+
+    def update_token_type_ids(self, token_type_ids: torch.LongTensor, decoder_input_ids: torch.LongTensor):
+        """_summary_
+
+        Args:
+            token_type_ids (_type_): (bs, seq_len)
+            decoder_input_ids (_type_): (bs, decoder_len)
+
+        Returns:
+            _type_: (bs, seq_len + decoder_len)
+        """
+        token_type_ids = torch.cat(
+            [token_type_ids, torch.ones_like(decoder_input_ids, device=decoder_input_ids.device)], dim=1
+        )
+        return token_type_ids
 
 
 class BeamSearchScorer:

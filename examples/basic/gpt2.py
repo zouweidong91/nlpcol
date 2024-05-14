@@ -93,7 +93,7 @@ def generate():
     print(predict_label)
     # ["play with my friends. I 'm a big fan of the game and I 'm looking forward to playing with my friends. I 'm looking forward to playing with my"]
 
-# get_loss()
+get_loss()
 generate()
 
 

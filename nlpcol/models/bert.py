@@ -6,13 +6,12 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from nlpcol.activations import get_activation
-from nlpcol.layers.attention import (AttentionOutput, EncAttention,
-                                     UnilmAttention)
-from nlpcol.layers.ffn import FFN
+from nlpcol.generation import UnilmGenerationMixin
 from nlpcol.layers.layer import LayerNorm
 from torch import Size, Tensor
 
 from .base import BaseConfig, BaseModel
+from .base.encoder import Stack, StackOutput
 
 # TODO bert mask机制
 
@@ -59,14 +58,16 @@ class Config(BaseConfig):
         self.num_layers: int = kwargs.get('num_hidden_layers')
         
         self.pad_token_id: int = kwargs.get('pad_token_id')
-        self.unilm:bool = kwargs.get('unilm', False)  # 是否使用Unilm模式
 
+        self.unilm:bool = kwargs.get('unilm', False)  # 是否使用Unilm模式
+        self.max_batch_size:int = kwargs.get('max_batch_size', 16)  # 推理过程中batch_size不能大于此值， kv_cache用
+        self.max_position: int = kwargs.get('max_position_embeddings')
+        
         # bert config文件配置
         self.architectures: list = kwargs.get('architectures')
         self.attention_probs_dropout_prob: float = kwargs.get('attention_probs_dropout_prob') # 直接用hidden_dropout_prob
         self.directionality: str = kwargs.get('directionality')
         self.hidden_act: str = kwargs.get('hidden_act')
-        self.max_position: int = kwargs.get('max_position_embeddings')
         self.model_type: str = kwargs.get('model_type')
         self.pooler_fc_size: int = kwargs.get('pooler_fc_size')
         self.pooler_num_attention_heads: int = kwargs.get('pooler_num_attention_heads')
@@ -94,6 +95,7 @@ class BertEmbeddings(nn.Module):
         input_ids: Optional[torch.LongTensor],
         token_type_ids: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
+        start_pos:int=0 # unilm解码时使用
 
     ) -> Tensor:
 
@@ -104,12 +106,17 @@ class BertEmbeddings(nn.Module):
 
         if token_type_ids is None:
             token_type_ids = torch.zeros(input_ids.shape, dtype=torch.long, device=device)
+
+        token_type_ids = token_type_ids[:, -seq_len:]
         token_type_embeddings = self.token_type_embeddings(token_type_ids)
         embeddings = inputs_embeddings + token_type_embeddings
 
         if position_ids is None:
-            position_ids = torch.arange(seq_len, dtype=torch.long, device=device).unsqueeze(0).expand(btz, -1)
+            position_ids = torch.arange(start_pos+seq_len, dtype=torch.long, device=device).unsqueeze(0).expand(btz, -1)
+
+        position_ids = position_ids[:, -seq_len:]
         position_embeddings = self.position_embeddings(position_ids)
+        
         embeddings += position_embeddings
 
         embeddings = self.layer_norm(embeddings)
@@ -117,56 +124,6 @@ class BertEmbeddings(nn.Module):
         return embeddings
         
 
-class BertLayer(nn.Module):
-    """Transformer层 encoder block
-        顺序为： Attention --> Add --> LayerNorm --> Feed Forward --> Add --> LayerNorm
-
-    Args:
-        nn (_type_): _description_
-    """
-    def __init__(self, config: Config):
-        super().__init__()
-        self.self_attention = UnilmAttention(config) if config.unilm else EncAttention(config)
-        self.attention_output = AttentionOutput(config)
-        self.ffn = FFN(config)
-    
-    def forward(self, hidden_states:Tensor, attention_mask:Tensor, **kwargs) -> Tensor:
-        # self attention
-        context_layer = self.self_attention(
-            hidden_states, hidden_states, hidden_states, attention_mask, **kwargs
-        )
-        attention_output = self.attention_output(context_layer, hidden_states)
-
-        # feedforward
-        ffn_output = self.ffn(attention_output)
-        return ffn_output
-        
-
-@dataclass
-class BertEncoderOutput:
-    last_hidden_state: torch.FloatTensor = None
-    hidden_states: Optional[List[torch.FloatTensor]] = None
-
-
-class BertEncoder(nn.Module):
-    def __init__(self, config: Config):
-        super().__init__()
-        self.layers = nn.ModuleList([BertLayer(config) for _ in range(config.num_layers)])
-
-    def forward(self, hidden_states:Tensor, attention_mask:Tensor, **kwargs) -> BertEncoderOutput:
-        """这里控制整个enceder层的输出格式, 暂时只输出最后一个隐藏藏 TODO
-        """
-        all_hidden_states = [hidden_states]
-
-        for i, layer_module in enumerate(self.layers):
-            hidden_states = layer_module(hidden_states, attention_mask, **kwargs)
-            all_hidden_states.append(hidden_states)
-
-        return BertEncoderOutput(
-            last_hidden_state = hidden_states,
-            hidden_states = all_hidden_states
-        )
-                
 # *******************pool nsp mlm 下游任务***********************
 class BertPool(nn.Module):
     """pool层"""
@@ -220,12 +177,13 @@ class BertOutput:
     loss: torch.FloatTensor = None
     pooled_output: torch.FloatTensor = None
     nsp_scores: torch.FloatTensor = None
-    mlm_scores: torch.FloatTensor = None
+    lm_logits: torch.FloatTensor = None
     hidden_states: List[torch.FloatTensor] = None # 所有encoder层的输出
     last_hidden_state: torch.FloatTensor = None # 最后一层encoer的输出
+    attention_mask: torch.LongTensor=None
 
 
-class BertModel(BaseModel):
+class BertModel(BaseModel, UnilmGenerationMixin):
     """bert 模型"""
     def __init__(self,
         config: Config,
@@ -241,7 +199,7 @@ class BertModel(BaseModel):
         self.with_mlm = with_mlm
 
         self.embed = BertEmbeddings(config)
-        self.encoder = BertEncoder(config)
+        self.encoder = Stack(config)
         
         if self.with_pool:
             self.pooler = BertPool(config)
@@ -259,14 +217,6 @@ class BertModel(BaseModel):
         if self.with_mlm:
             return self.mlm.lm_head
 
-    @property
-    def origin_embedding_keys(self) -> list:
-        return [
-            'bert.embeddings.word_embeddings.weight',
-            'cls.predictions.decoder.weight',
-            'cls.predictions.bias',
-        ]
-
     def forward(
         self,
         input_ids: Optional[Tensor],
@@ -274,16 +224,26 @@ class BertModel(BaseModel):
         position_ids: Optional[Tensor] = None,
         attention_mask: Optional[Tensor] = None,
         labels: Optional[Tensor]=None, # unilm任务生成模式下使用
+        start_pos:int=0
     ):
         # ========================= attention_mask =========================
         if attention_mask is None:
             # 非padding部分为1, padding部分为0
             attention_mask = (input_ids != self.config.pad_token_id).long() # bert默认0为mask_value
 
-        input_embedding = self.embed(input_ids, token_type_ids, position_ids)
-        encoder_output:BertEncoderOutput = self.encoder(input_embedding, attention_mask, token_type_ids=token_type_ids)
-        hidden_states = encoder_output.last_hidden_state
-        pooled_output, nsp_scores, mlm_scores, loss = None, None, None, None
+        # embed
+        input_embedding = self.embed(input_ids, token_type_ids, position_ids, start_pos)
+
+        # encoder
+        enc_output:StackOutput = self.encoder(
+            hidden_states = input_embedding, 
+            attention_mask = attention_mask, 
+            token_type_ids = token_type_ids, # unilm mask用
+            start_pos = start_pos
+        )
+
+        hidden_states = enc_output.last_hidden_state
+        pooled_output, nsp_scores, lm_logits, loss = None, None, None, None
 
         if self.with_pool:
             pooled_output = self.pooler(hidden_states)
@@ -291,22 +251,32 @@ class BertModel(BaseModel):
             nsp_scores = self.nsp(pooled_output)
 
         if self.with_mlm:
-            mlm_scores:Tensor = self.mlm(hidden_states)
+            lm_logits:Tensor = self.mlm(hidden_states)
             if labels is not None: # unilm任务
-                shift_logits = mlm_scores[..., :-1, :].contiguous()
+                shift_logits = lm_logits[..., :-1, :].contiguous()
                 shift_labels = labels[..., 1:].contiguous()
                 
                 loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
                 loss = loss_fn(shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
+                print(loss)
 
         return BertOutput(
             loss = loss,
             pooled_output = pooled_output,
             nsp_scores = nsp_scores,
-            mlm_scores = mlm_scores,
-            hidden_states = encoder_output.hidden_states,
-            last_hidden_state = encoder_output.last_hidden_state
+            lm_logits = lm_logits,
+            hidden_states = enc_output.hidden_states,
+            last_hidden_state = enc_output.last_hidden_state,
+            attention_mask = attention_mask
         )
+
+    @property
+    def origin_embedding_keys(self) -> list:
+        return [
+            'bert.embeddings.word_embeddings.weight',
+            'cls.predictions.decoder.weight',
+            'cls.predictions.bias',
+        ]
 
     def variable_mapping(self):
         """
@@ -343,10 +313,10 @@ class BertModel(BaseModel):
                     f"encoder.layers.{i}.self_attention.k.bias": prefix_i + 'attention.self.key.bias',
                     f"encoder.layers.{i}.self_attention.v.weight": prefix_i + 'attention.self.value.weight',
                     f"encoder.layers.{i}.self_attention.v.bias": prefix_i + 'attention.self.value.bias',
-                    f"encoder.layers.{i}.attention_output.o.weight": prefix_i + 'attention.output.dense.weight',
-                    f"encoder.layers.{i}.attention_output.o.bias": prefix_i + 'attention.output.dense.bias',
-                    f"encoder.layers.{i}.attention_output.layer_norm.weight": prefix_i + 'attention.output.LayerNorm.gamma',
-                    f"encoder.layers.{i}.attention_output.layer_norm.bias": prefix_i + 'attention.output.LayerNorm.beta',
+                    f"encoder.layers.{i}.self_attention_output.o.weight": prefix_i + 'attention.output.dense.weight',
+                    f"encoder.layers.{i}.self_attention_output.o.bias": prefix_i + 'attention.output.dense.bias',
+                    f"encoder.layers.{i}.self_attention_output.layer_norm.weight": prefix_i + 'attention.output.LayerNorm.gamma',
+                    f"encoder.layers.{i}.self_attention_output.layer_norm.bias": prefix_i + 'attention.output.LayerNorm.beta',
                     f"encoder.layers.{i}.ffn.ff.dense_1.weight": prefix_i + 'intermediate.dense.weight',
                     f"encoder.layers.{i}.ffn.ff.dense_1.bias": prefix_i + 'intermediate.dense.bias',
                     f"encoder.layers.{i}.ffn.ff.dense_2.weight": prefix_i + 'output.dense.weight',

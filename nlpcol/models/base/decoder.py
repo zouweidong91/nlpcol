@@ -6,93 +6,25 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from nlpcol.generation import DecGenerationMixin
-from nlpcol.layers.attention import AttentionOutput, DecAttention
+from nlpcol.layers.attention import DecAttention
 from nlpcol.layers.embed import GptEmbeddings
-from nlpcol.layers.ffn import FFN
 from nlpcol.layers.layer import LayerNorm
 from torch import Size, Tensor
 
 from ._base import BaseConfig as Config
 from ._base import BaseModel
+from .encoder import Block, Stack, StackOutput
 
 
-class Block(nn.Module):
-    """
-    包含模块： Attention --> Feed Forward
-    TODO self_attention和self_attention_output
-    """
-    def __init__(self, config: Config):
-        super().__init__()
+class DecBlock(Block):
+    def get_attention(self, config: Config):
+        return DecAttention(config)
+    
 
-        self.self_attention = DecAttention(config)
-        self.self_attention_output = AttentionOutput(config)
-        self.ffn = FFN(config)
-
-        self.layer_norm_type = config.layer_norm_type
-        if self.layer_norm_type == "pre":
-            self.layer_norm = LayerNorm(config.d_model, eps=config.layer_norm_eps)
-
-    def forward(
-        self, 
-        hidden_states:Tensor, 
-        attention_mask:Tensor=None, 
-        start_pos:int=0
-    ) -> Tensor:
-        
-        # atten pre_norm
-        if self.layer_norm_type == "pre":
-            _hidden_states = self.layer_norm(hidden_states)
-        else:
-            _hidden_states = hidden_states
-
-        # self attention
-        context_layer = self.self_attention(
-            _hidden_states, _hidden_states, _hidden_states, attention_mask, start_pos
-        )
-        hidden_states = self.self_attention_output(context_layer, hidden_states) # add为标准化之前的hidden_states
-
-        # feedforward
-        ffn_output = self.ffn(hidden_states)
-        return ffn_output
-
-
-@dataclass
-class StackOutput:
-    last_hidden_state: torch.FloatTensor = None
-    hidden_states: Optional[List[torch.FloatTensor]] = None
-    attention_mask: Optional[torch.LongTensor] = None # 推理时还需要用到
-
-
-class Stack(nn.Module):
-    """多个Block的叠加"""
-    def __init__(self, config: Config):
-        super().__init__()
-        self.layers = nn.ModuleList([Block(config) for _ in range(config.num_layers)])
-        
-    def forward(
-        self, 
-        hidden_states:Tensor, 
-        attention_mask:Tensor=None,
-        start_pos:int=0
-    ) -> Tensor:
-        all_hidden_states = []
-
-        for i, layer_module in enumerate(self.layers):
-            all_hidden_states.append(hidden_states)
-            hidden_states = layer_module(
-                hidden_states, 
-                attention_mask,
-                start_pos = start_pos
-            )
-
-        all_hidden_states.append(hidden_states)
-
-        return StackOutput(
-            last_hidden_state = hidden_states,
-            hidden_states = all_hidden_states,
-            attention_mask = attention_mask
-        )
-
+class DecStack(Stack):
+    def get_block(self, config: Config):
+        """下游模型用其他组件时继承用"""
+        return DecBlock(config)
 
 @dataclass
 class CausalLMOutput:
@@ -108,7 +40,7 @@ class Decoder(BaseModel, DecGenerationMixin):
         super().__init__(config, **kwargs)
         
         self.embed = self.get_embed(config)
-        self.decoder = Stack(config)
+        self.decoder = DecStack(config)
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
         self.has_final_ln = config.has_final_layernorm
 

@@ -117,7 +117,7 @@ class DecAttention(EncAttention):
 
     def get_lm_mask(self, scores:Tensor):
         """定义下三角矩阵的atten_mask， 语言模型用
-        scores: [batch_size, num_heads, from_seq_len, to_seq_len]
+            scores: [batch_size, num_heads, from_seq_len, to_seq_len]
         """
         qlen, klen = scores.shape[2:]   # 推理阶段qlen==1
         key_mask = torch.tril(
@@ -148,7 +148,7 @@ class DecAttention(EncAttention):
 
         return keys.to(key), values.to(value)
 
-    def forward(self, query, key, value, padding_mask:Tensor, start_pos:int, **kwargs):
+    def forward(self, query, key, value, padding_mask:Tensor, start_pos:int=0, **kwargs):
         # query, key, value: [bsz, seqlen, head_size] 
         # start_pos: Starting position for caching.
         q = self.q(query)
@@ -166,20 +166,22 @@ class DecAttention(EncAttention):
 
 # Unilm的attention mask
 class UnilmAttention(DecAttention):
-    def get_unilm_mask(self, token_type_ids:Tensor, **kwargs):
+    def get_unilm_mask(self, scores:Tensor, token_type_ids:Tensor, **kwargs):
         """定义下三角矩阵的atten_mask， 语言模型用
-        scores: (bs, n_heads, qlen, klen)
+            scores: (bs, n_heads, qlen, klen)
         """
+        qlen, klen = scores.shape[2:]   # 推理阶段qlen==1
         cumsum_type_ids = torch.cumsum(token_type_ids, dim=1)       # (bs, klen)
         unilm_mask = (
             cumsum_type_ids.unsqueeze(1) <= cumsum_type_ids.unsqueeze(2)
         )                                                           # (bs, klen, klen)
         unilm_mask = unilm_mask.unsqueeze(1).long()                 # (bs, 1, klen, klen)
+        unilm_mask = unilm_mask[:, :, -qlen:, :]                    # (bs, 1, qlen, klen)
         return unilm_mask
 
-    def get_mask(self, padding_mask:Tensor, **kwargs):
+    def get_mask(self, scores:Tensor, padding_mask:Tensor, **kwargs):
         """通过token_type_ids获取对应的mask"""
-        mask = self.get_unilm_mask(**kwargs)
+        mask = self.get_unilm_mask(scores, **kwargs)
 
         if padding_mask is not None: # infer模式时
             mask = mask * self.get_padding_mask(padding_mask)

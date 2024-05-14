@@ -21,7 +21,7 @@ checkpoint_path = model_path + '/pytorch_model.bin'
 tokenizer = Tokenizer(vocab_path, do_lower_case=True)
 
 # 需要传入参数with_mlm
-model = build_transformer_model(checkpoint_path, config_path, with_mlm=True, with_pool=True, with_nsp=True)  # 建立模型，加载权重
+model:BertModel = build_transformer_model(checkpoint_path, config_path, with_mlm=True, with_pool=True, with_nsp=True)  # 建立模型，加载权重
 model.to(device)
 
 # 对比模型参数
@@ -40,7 +40,7 @@ segment_ids_tensor = torch.tensor([segments_ids, segments_ids]).to(device)
 
 
 bert_output:BertOutput = model.predict(tokens_ids_tensor, segment_ids_tensor)
-mlm_scores = bert_output.mlm_scores
+mlm_scores = bert_output.lm_logits
 result = torch.argmax(mlm_scores[0, :], dim=-1).cpu().numpy()
 print(tokenizer.decode(result))
 

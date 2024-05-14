@@ -11,6 +11,7 @@ import torch.nn as nn
 from nlpcol.callback import Callback
 from nlpcol.config import TrainConfig
 from nlpcol.model import build_transformer_model
+from nlpcol.models.bert import BertModel, BertOutput
 from nlpcol.tokenizers import Tokenizer, load_vocab
 from nlpcol.trainer import Trainer
 from nlpcol.utils.snippets import (ListDataset, seed_everything,
@@ -18,7 +19,6 @@ from nlpcol.utils.snippets import (ListDataset, seed_everything,
 from nlpcol.utils.snippets4examples import model_name_gene
 from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
 from rouge import Rouge  # pip install rouge
-from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 seed_everything(42)
@@ -96,7 +96,7 @@ train_dataset = MyDataset('/home/dataset/corpus/seq2seq/summary/csl_title_public
 valid_dataset = MyDataset('/home/dataset/corpus/seq2seq/summary/csl_title_public/csl_title_dev.json')
 
 
-model = build_transformer_model(
+model:BertModel = build_transformer_model(
     checkpoint_path,
     config_path,
     with_mlm=True,
@@ -108,15 +108,21 @@ model.eval()  # 关闭  dropout
 
 
 def generate(text):
-    input_ids, _ = tokenizer.encode(text)
-    input_ids = torch.tensor([input_ids], device=device)
+    input_ids, segment_ids = tokenizer.encode(text)
+    # segment_ids  [0, 0, 0, 0, 0, 0, 0]
+    
+    input_ids = torch.tensor([input_ids]).to(device)
+    segment_ids = torch.tensor([segment_ids]).to(device)
 
-    # logits = model.generate(input_ids, mode='do_sample', top_k=20, top_p=0.9, temperature=0.9)
-    logits = model.generate(input_ids, mode='greedy_search', max_new_tokens=64)
-    # logits = model.generate(input_ids, mode='beam_search', num_beams=4)
+    # token_ids = model.generate(input_ids, token_type_ids = segment_ids, mode='do_sample', top_k=20, top_p=0.9, temperature=0.9)
+    token_ids = model.generate(
+        input_ids = input_ids,
+        token_type_ids = segment_ids,
+        mode='greedy_search',  
+        max_new_tokens=64
+    )
 
-    logits=logits[:,1:] # 去掉bos
-    predict_label = [tokenizer.decode(i) for i in logits]
+    predict_label = [tokenizer.decode(i) for i in token_ids]
     return predict_label[0]
 
 
@@ -165,12 +171,12 @@ class Evaluator(Callback):
 def just_show():
     s1 = u'抽象了一种基于中心的战术应用场景与业务,并将网络编码技术应用于此类场景的实时数据多播业务中。在分析基于中心网络与Many-to-all业务模式特性的基础上,提出了仅在中心节点进行编码操作的传输策略以及相应的贪心算法。分析了网络编码多播策略的理论增益上界,仿真试验表明该贪心算法能够获得与理论相近的性能增益。最后的分析与仿真试验表明,在这种有中心网络的实时数据多播应用中,所提出的多播策略的实时性能要明显优于传统传输策略。'
     s2 = u'普适计算环境中未知移动节点的位置信息是定位服务要解决的关键技术。在普适计算二维空间定位过程中,通过对三角形定位单元区域的误差分析,提出了定位单元布局(LUD)定理。在此基础上,对多个定位单元布局进行了研究,定义了一个新的描述定位单元中定位参考点覆盖效能的物理量——覆盖基,提出了在误差最小情况下定位单元布局的覆盖基定理。仿真实验表明定位单元布局定理能更好地满足对普适终端实时定位的需求,且具有较高的精度和最大覆盖效能。'
-    # for s in [s1, s2]:
-    #     print(u'生成标题:', autotitle.generate(s))
+    for s in [s1, s2]:
+        print(u'生成标题:', generate(s))
 
 
 if __name__ == '__main__':
-    # just_show()
+    just_show()
     evaluator = Evaluator(trainer, save_path)
     # '<extra_id_0>北京 <extra_id_1>北京  <extra_id_2>北京 首都'
 

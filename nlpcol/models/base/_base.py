@@ -33,6 +33,7 @@ class BaseConfig:
 
     # decoder 模型配置
     is_decoder: bool # EncDec结构中，指示是否是decoder端
+    unilm: bool = False # 是否是unilm模式 bert等encoder模型用
 
     # 其他额外的默认配置
     use_bias: bool = True # nn.liner是否使用偏置  e.g. t5不使用
