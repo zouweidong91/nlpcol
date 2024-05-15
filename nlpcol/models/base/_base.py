@@ -16,6 +16,7 @@ class BaseConfig:
     n_heads: int # atten_heads 数量
     vocab_size: int
     num_layers: int
+    type_vocab_size: int
 
     dropout_rate: float
     initializer_range: float # 权重初始化标准差值

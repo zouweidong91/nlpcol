@@ -7,13 +7,13 @@ import torch
 import torch.nn as nn
 from nlpcol.activations import get_activation
 from nlpcol.generation import UnilmGenerationMixin
+from nlpcol.layers.embed import BertEmbeddings
 from nlpcol.layers.layer import LayerNorm
 from torch import Size, Tensor
 
 from .base import BaseConfig, BaseModel
 from .base.encoder import Stack, StackOutput
 
-# TODO bert mask机制
 
 # config.json
 """
@@ -75,53 +75,6 @@ class Config(BaseConfig):
         self.pooler_size_per_head: int = kwargs.get('pooler_size_per_head')
         self.pooler_type: str = kwargs.get('pooler_type')
         self.type_vocab_size: int = kwargs.get('type_vocab_size')
-        
-
-class BertEmbeddings(nn.Module):
-    """用 word, position and token_type embeddings 构造embedding
-    """
-    def __init__(self, config: Config):
-        super().__init__()
-        # padding_idx 将相应位置的embedding全部设置为0， 不参与梯度计算，训练过程参数也不更新
-        self.token_embeddings = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_token_id)
-        self.position_embeddings = nn.Embedding(config.max_position, config.d_model)
-        self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.d_model)
-
-        self.layer_norm = LayerNorm(config.d_model, config.layer_norm_eps)
-        self.dropout = nn.Dropout(config.dropout_rate)
-
-    def forward(
-        self,
-        input_ids: Optional[torch.LongTensor],
-        token_type_ids: Optional[torch.LongTensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        start_pos:int=0 # unilm解码时使用
-
-    ) -> Tensor:
-
-        device = input_ids.device
-        btz, seq_len = input_ids.shape
-
-        inputs_embeddings = self.token_embeddings(input_ids)
-
-        if token_type_ids is None:
-            token_type_ids = torch.zeros(input_ids.shape, dtype=torch.long, device=device)
-
-        token_type_ids = token_type_ids[:, -seq_len:]
-        token_type_embeddings = self.token_type_embeddings(token_type_ids)
-        embeddings = inputs_embeddings + token_type_embeddings
-
-        if position_ids is None:
-            position_ids = torch.arange(start_pos+seq_len, dtype=torch.long, device=device).unsqueeze(0).expand(btz, -1)
-
-        position_ids = position_ids[:, -seq_len:]
-        position_embeddings = self.position_embeddings(position_ids)
-        
-        embeddings += position_embeddings
-
-        embeddings = self.layer_norm(embeddings)
-        embeddings = self.dropout(embeddings)
-        return embeddings
         
 
 # *******************pool nsp mlm 下游任务***********************
@@ -258,7 +211,6 @@ class BertModel(BaseModel, UnilmGenerationMixin):
                 
                 loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
                 loss = loss_fn(shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
-                print(loss)
 
         return BertOutput(
             loss = loss,

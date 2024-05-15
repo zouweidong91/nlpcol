@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from nlpcol.activations import get_activation
 from nlpcol.generation import EncDecGenerationMixin
 from nlpcol.layers.attention import AttentionOutput, EncDecAttention
+from nlpcol.layers.embed import T5Embeddings
 from nlpcol.layers.ffn import FFN, DenseGatedActDense
 from nlpcol.layers.layer import RMSNorm
 from nlpcol.layers.pe import RelativePositionalT5
@@ -112,18 +113,6 @@ class Config(BaseConfig):
         self.tokenizer_class: str = kwargs.get('tokenizer_class')
         self.use_cache: bool = kwargs.get('use_cache')
 
-
-
-class T5Embeddings(nn.Module):
-    def __init__(self, config: Config):
-        super().__init__()
-        self.token_embeddings = nn.Embedding(config.vocab_size, config.d_model, padding_idx=config.pad_token_id)
-        self.dropout = nn.Dropout(config.dropout_rate)
-
-    def forward(self, input_ids: Optional[torch.LongTensor]) -> Tensor:
-        embeddings = self.token_embeddings(input_ids)
-        embeddings = self.dropout(embeddings)
-        return embeddings
 
 
 class T5FFN(FFN):

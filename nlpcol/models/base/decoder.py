@@ -49,7 +49,7 @@ class Decoder(BaseModel, DecGenerationMixin):
         
         self.tie_weights()
 
-    def get_embed(self, config: Config) -> GptEmbeddings:
+    def get_embed(self, config: Config):
         raise NotImplementedError
 
     def forward(
