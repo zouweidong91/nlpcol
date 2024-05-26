@@ -47,7 +47,6 @@ class SinusoidalPositionalEmbedding(nn.Module):
 class RotaryPositionalEmbedding(nn.Module):
     """旋转式位置编码:https://kexue.fm/archives/8265   无最大长度限制。乘性位置编码，区别于绝对位置编码中的加性
     严格按照原论文的实现方式:  https://nn.labml.ai/transformers/rope/index.html
-    TODO llama代码以复数形式实现  对比代码
     """
     def __init__(self, embedding_size:int):
         """

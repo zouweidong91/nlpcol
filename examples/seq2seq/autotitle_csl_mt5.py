@@ -62,7 +62,7 @@ model:T5Model = build_transformer_model(
 
 
 def generate(text):
-    input_ids, _ = tokenizer.encode(text)
+    input_ids, segment_ids = tokenizer.encode(text, maxlen=max_c_len)
     input_ids = torch.tensor([input_ids], device=device)
 
     # logits = model.generate(input_ids, mode='do_sample', top_k=20, top_p=0.9, temperature=0.9)
