@@ -171,6 +171,7 @@ class T5AttentionLayer(EncDecAttention):
 
     def score_scale(self, scores:Tensor) -> Tensor:
         # T5 scores不需要缩放
+        # 因为 T5 在初始化时跟bert不一样 使用std=factor * ((self.config.d_model) ** -0.5)，等同于bert att_score的缩放效果
         return scores
 
 

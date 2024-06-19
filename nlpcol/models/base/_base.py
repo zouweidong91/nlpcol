@@ -71,6 +71,7 @@ class BaseModel(nn.Module):
     def _init_weights(self, module:nn.Module):
         """初始化权重  大部分神经网络层都是由以下三种层组合成的
         不同的初始化策略，微调阶段影响不是很大
+        注意T5初始化时，attention ffn相关模块标准差 std=factor * ((self.config.d_model) ** -0.5)
         """
         if self.skip_init: # 跳过初始化
             module.to_empty(device='cpu')

@@ -38,7 +38,11 @@ class GenerationMixin:
         **model_kwargs
     ) -> List[List[int]]:
         self.eval() # eval模式
-        """batch_generate"""
+        """batch_generate
+        解码过程的两阶段：
+            prefill stage： 推理过程的初始化步骤，生成 kv_cache 
+            decode stage：利用 kv_cache 进行解码，并向 kv_cache 添加新的信息。
+        """
         assert mode in ('greedy_search', 'beam_search', 'do_sample')
 
         if mode == "beam_search":
